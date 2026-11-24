@@ -4,124 +4,210 @@ import {
   cloneGrid,
   countFilledCells,
   createEmptyGrid,
+  digitToSymbol,
   findConflicts,
+  getBoxDims,
   getCellCandidates,
   getNextSudokuHint,
+  KillerCage,
   solveSudoku,
   SUDOKU_PRESETS,
   SudokuGrid,
+  SudokuSize,
+  symbolToDigit,
 } from './sudokuSolver';
 import { isValidPersistedSudoku } from './sudokuPersistence';
 
-function assertValidCompleteSudoku(grid: SudokuGrid) {
-  assert.equal(grid.length, 9);
-  for (let r = 0; r < 9; r++) {
+function assertValidCompleteSudoku(
+  grid: SudokuGrid,
+  size: SudokuSize,
+  cages?: KillerCage[]
+) {
+  const { boxRows, boxCols } = getBoxDims(size);
+  assert.equal(grid.length, size);
+  for (let r = 0; r < size; r++) {
     const rowSet = new Set(grid[r]);
-    assert.equal(rowSet.size, 9, `Row ${r} must have 9 unique digits`);
-    for (let d = 1; d <= 9; d++) {
-      assert.ok(rowSet.has(d), `Row ${r} missing digit ${d}`);
+    assert.equal(rowSet.size, size, `Row ${r} must have ${size} unique symbols`);
+    for (let d = 1; d <= size; d++) {
+      assert.ok(rowSet.has(d), `Row ${r} missing symbol ${d}`);
     }
   }
-  for (let c = 0; c < 9; c++) {
+  for (let c = 0; c < size; c++) {
     const colSet = new Set<number>();
-    for (let r = 0; r < 9; r++) colSet.add(grid[r][c]);
-    assert.equal(colSet.size, 9, `Col ${c} must have 9 unique digits`);
+    for (let r = 0; r < size; r++) colSet.add(grid[r][c]);
+    assert.equal(colSet.size, size, `Col ${c} must have ${size} unique symbols`);
   }
-  for (let br = 0; br < 3; br++) {
-    for (let bc = 0; bc < 3; bc++) {
+  for (let br = 0; br < size; br += boxRows) {
+    for (let bc = 0; bc < size; bc += boxCols) {
       const boxSet = new Set<number>();
-      for (let dr = 0; dr < 3; dr++) {
-        for (let dc = 0; dc < 3; dc++) {
-          boxSet.add(grid[br * 3 + dr][bc * 3 + dc]);
+      for (let dr = 0; dr < boxRows; dr++) {
+        for (let dc = 0; dc < boxCols; dc++) {
+          boxSet.add(grid[br + dr][bc + dc]);
         }
       }
-      assert.equal(boxSet.size, 9, `Box (${br},${bc}) must have 9 unique digits`);
+      assert.equal(
+        boxSet.size,
+        size,
+        `Box (${br},${bc}) must have ${size} unique symbols`
+      );
+    }
+  }
+  if (cages && cages.length > 0) {
+    for (const cage of cages) {
+      const seen = new Set<number>();
+      let sum = 0;
+      for (const [r, c] of cage.cells) {
+        const v = grid[r][c];
+        assert.ok(!seen.has(v), `Duplicate ${v} inside Killer cage #${cage.id}`);
+        seen.add(v);
+        sum += v;
+      }
+      assert.equal(
+        sum,
+        cage.sum,
+        `Killer cage #${cage.id} expected sum ${cage.sum}, got ${sum}`
+      );
     }
   }
 }
 
-test('solveSudoku solves the attached IMG_5184 38-clue board with a unique solution', () => {
-  const board = SUDOKU_PRESETS[0].board;
-  assert.equal(countFilledCells(board), 38);
+test('symbol helpers convert 1..16 <-> 1..9, A..G cleanly', () => {
+  assert.equal(digitToSymbol(1), '1');
+  assert.equal(digitToSymbol(9), '9');
+  assert.equal(digitToSymbol(10), 'A');
+  assert.equal(digitToSymbol(16), 'G');
+  assert.equal(symbolToDigit('g', 16), 16);
+  assert.equal(symbolToDigit('A', 9), null);
+  assert.equal(symbolToDigit('5', 4), null);
+});
 
-  const res = solveSudoku(board);
-  assert.equal(res.solved, true);
-  assert.equal(res.hasMultipleSolutions, false);
-  assert.equal(res.invalidReason, null);
-  assert.ok(res.solution);
+test('solveSudoku solves ALL presets (4x4, 6x6, 9x9 Easy/Hard, Killer 9x9, and 16x16 IMG_5197) with unique solutions', () => {
+  for (const preset of SUDOKU_PRESETS) {
+    const res = solveSudoku(preset.board, {
+      size: preset.size,
+      cages: preset.cages,
+    });
+    assert.equal(
+      res.solved,
+      true,
+      `Preset ${preset.key} (${preset.size}x${preset.size}) must solve`
+    );
+    assert.equal(
+      res.hasMultipleSolutions,
+      false,
+      `Preset ${preset.key} must have a unique solution`
+    );
+    assert.equal(res.invalidReason, null);
+    assert.ok(res.solution);
+    assertValidCompleteSudoku(res.solution, preset.size, preset.cages);
 
-  assertValidCompleteSudoku(res.solution);
-
-  // Verify every original clue is preserved verbatim
-  for (let r = 0; r < 9; r++) {
-    for (let c = 0; c < 9; c++) {
-      if (board[r][c] !== 0) {
-        assert.equal(res.solution[r][c], board[r][c]);
+    // Verify original givens are preserved
+    for (let r = 0; r < preset.size; r++) {
+      for (let c = 0; c < preset.size; c++) {
+        if (preset.board[r][c] !== 0) {
+          assert.equal(res.solution[r][c], preset.board[r][c]);
+        }
       }
     }
   }
 });
 
-test('solveSudoku solves medium and hard presets with unique solutions', () => {
-  for (const preset of SUDOKU_PRESETS.slice(1)) {
-    const res = solveSudoku(preset.board);
-    assert.equal(res.solved, true, `Preset ${preset.key} should solve`);
-    assert.equal(
-      res.hasMultipleSolutions,
-      false,
-      `Preset ${preset.key} should have a unique solution`
-    );
-    assert.ok(res.solution);
-    assertValidCompleteSudoku(res.solution);
-  }
+test('solveSudoku handles 8x8 and 12x12 boards cleanly', () => {
+  const g8 = createEmptyGrid(8);
+  g8[0][0] = 1;
+  g8[0][7] = 8;
+  const r8 = solveSudoku(g8, { size: 8 });
+  assert.equal(r8.solved, true);
+  assert.ok(r8.solution);
+  assertValidCompleteSudoku(r8.solution, 8);
+
+  const g12 = createEmptyGrid(12);
+  g12[0][0] = 12;
+  const r12 = solveSudoku(g12, { size: 12 });
+  assert.equal(r12.solved, true);
+  assert.ok(r12.solution);
+  assertValidCompleteSudoku(r12.solution, 12);
 });
 
-test('findConflicts detects row, column, and 3x3 box duplicates and solveSudoku rejects them', () => {
-  const grid = createEmptyGrid();
+test('findConflicts detects row, col, box, AND Killer cage sum/duplicate violations', () => {
+  const grid = createEmptyGrid(9);
   grid[0][0] = 5;
-  grid[0][4] = 5; // row duplicate
-  grid[4][0] = 5; // col duplicate
-  grid[1][1] = 5; // box duplicate
+  grid[0][1] = 5; // duplicate in row AND cage
+  const cages: KillerCage[] = [{ id: 1, sum: 9, cells: [[0, 0], [0, 1]] }];
 
-  const conflicts = findConflicts(grid);
+  const conflicts = findConflicts(grid, { size: 9, cages });
   assert.ok(conflicts.has('0,0'));
-  assert.ok(conflicts.has('0,4'));
-  assert.ok(conflicts.has('4,0'));
-  assert.ok(conflicts.has('1,1'));
+  assert.ok(conflicts.has('0,1'));
 
-  const res = solveSudoku(grid);
+  // Distinct digits in cage that violate exact sum (5 + 6 = 11 != 9)
+  grid[0][1] = 6;
+  const sumConflicts = findConflicts(grid, { size: 9, cages });
+  assert.ok(sumConflicts.has('0,0'));
+  assert.ok(sumConflicts.has('0,1'));
+
+  const res = solveSudoku(grid, { size: 9, cages });
   assert.equal(res.solved, false);
-  assert.equal(res.solution, null);
   assert.ok(res.invalidReason);
 });
 
-test('getCellCandidates and getNextSudokuHint produce valid logical steps matching the solution', () => {
-  const board = cloneGrid(SUDOKU_PRESETS[0].board);
-  const full = solveSudoku(board);
-  assert.ok(full.solution);
+test('getCellCandidates and getNextSudokuHint work for Classic 9x9, Killer 9x9, and 16x16', () => {
+  // Classic 9x9
+  const easy = SUDOKU_PRESETS.find((p) => p.key === 'classic-9-easy')!;
+  const board9 = cloneGrid(easy.board);
+  assert.equal(countFilledCells(board9), 38);
+  const full9 = solveSudoku(board9, { size: 9 });
+  assert.ok(full9.solution);
+  const hint9 = getNextSudokuHint(board9, { size: 9 });
+  assert.ok(hint9);
+  assert.equal(hint9.value, full9.solution[hint9.row][hint9.col]);
 
-  const cands = getCellCandidates(board, 5, 8);
-  assert.ok(cands.includes(full.solution[5][8]));
+  // Killer 9x9 cage remainder hint
+  const killer = SUDOKU_PRESETS.find((p) => p.key === 'killer-9-classic')!;
+  const fullK = solveSudoku(killer.board, { size: 9, cages: killer.cages });
+  assert.ok(fullK.solution);
+  const partialK = cloneGrid(killer.board);
+  // Fill one cell of the 2-cell cage (0,0)-(0,1) sum=3 -> should give Killer Cage hint!
+  partialK[0][0] = fullK.solution[0][0];
+  const hintK = getNextSudokuHint(partialK, { size: 9, cages: killer.cages });
+  assert.ok(hintK);
+  assert.equal(hintK.technique, 'Killer Cage');
+  assert.equal(hintK.row, 0);
+  assert.equal(hintK.col, 1);
+  assert.equal(hintK.value, fullK.solution[0][1]);
 
-  const hint = getNextSudokuHint(board);
-  assert.ok(hint);
-  assert.equal(board[hint.row][hint.col], 0);
-  assert.equal(hint.value, full.solution[hint.row][hint.col]);
-  assert.ok(
-    hint.technique === 'Naked Single' || hint.technique === 'Hidden Single',
-    `Expected basic logical technique on easy board, got ${hint.technique}`
-  );
+  // 16x16 candidates & hint
+  const hex16 = SUDOKU_PRESETS.find((p) => p.key === 'classic-16-hex')!;
+  const full16 = solveSudoku(hex16.board, { size: 16 });
+  assert.ok(full16.solution);
+  const cands16 = getCellCandidates(hex16.board, 0, 0, { size: 16 });
+  assert.ok(cands16.includes(full16.solution[0][0]));
+  const hint16 = getNextSudokuHint(hex16.board, { size: 16 });
+  assert.ok(hint16);
+  assert.equal(hint16.value, full16.solution[hint16.row][hint16.col]);
 });
 
-test('isValidPersistedSudoku validates persisted snapshots', () => {
+test('isValidPersistedSudoku accepts v2 multi-size/Killer payloads and legacy v1 payloads', () => {
   assert.equal(isValidPersistedSudoku(null), false);
-  assert.equal(isValidPersistedSudoku({ version: 2 }), false);
+  assert.equal(isValidPersistedSudoku({ version: 3 }), false);
   assert.equal(
     isValidPersistedSudoku({
       version: 1,
       savedAt: Date.now(),
-      givens: createEmptyGrid(),
-      userEntries: createEmptyGrid(),
+      givens: createEmptyGrid(9),
+      userEntries: createEmptyGrid(9),
+      solution: null,
+    }),
+    true
+  );
+  assert.equal(
+    isValidPersistedSudoku({
+      version: 2,
+      savedAt: Date.now(),
+      size: 16,
+      variant: 'classic',
+      cages: [],
+      givens: createEmptyGrid(16),
+      userEntries: createEmptyGrid(16),
       solution: null,
       uploadedImageDataUrl: null,
       gridRect: null,

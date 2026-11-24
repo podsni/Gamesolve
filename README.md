@@ -1,11 +1,9 @@
-# Okay? Simulator & Auto-Solver (+ Sudoku Scanner & Auto-Solver)
+# Okay? Simulator & Auto-Solver + Multi-Size & Killer Sudoku Solver
 
-Aplikasi web interaktif berbasis **React 19 + TypeScript + Vite + Tailwind CSS v4** yang menggabungkan dua pemecah puzzle visual lengkap dalam satu antarmuka:
+Aplikasi web interaktif berbasis **React 19 + TypeScript + Vite + Tailwind CSS v4** yang menggabungkan dua pemecah puzzle visual lengkap dalam satu antarmuka dan berjalan **100% di sisi klien (browser)** tanpa memerlukan backend atau API eksternal:
 
-1. **Okay? Simulator & Auto-Solver** — simulator fisika pantulan bola 2D, pemindai screenshot otomatis berbasis Computer Vision di browser, editor level presisi, prediksi lintasan real-time saat membidik, dan mesin pencarian solusi otomatis (*Auto-Solver*) lengkap dengan analisis zona aman.
-2. **Sudoku Scanner & Auto-Solver** — papan Sudoku 9×9 interaktif, pemindai angka otomatis dari screenshot HP (OCR lokal di browser tanpa API eksternal), solver super-cepat berbasis bitmask + MRV, serta sistem petunjuk bertahap (*Hint 1 Langkah*) dengan penjelasan logika.
-
-Seluruh komputasi fisika, pengolahan citra (*Computer Vision*), OCR angka Sudoku, pencarian solusi, hingga penyimpanan lokal berjalan **100% di sisi klien (browser)**.
+1. **Okay? Simulator & Auto-Solver** — simulator fisika pantulan bola 2D, pemindai screenshot otomatis berbasis Computer Vision, editor level presisi, prediksi lintasan real-time saat membidik, dan mesin pencarian solusi otomatis (*Auto-Solver*) dengan analisis zona aman.
+2. **Sudoku Scanner & Auto-Solver (Multi-Size + 16×16 + Killer Sudoku)** — pemindai screenshot otomatis untuk berbagai ukuran (**4×4, 6×6, 8×8, 9×9, 12×12, 16×16 `1–9, A–G`**) sekaligus **Killer Sudoku** (deteksi sangkar garis putus-putus & jumlah sangkar), solver cepat berbasis bitmask + propagasi kendala, editor sangkar interaktif, serta petunjuk logis bertahap.
 
 ---
 
@@ -13,70 +11,90 @@ Seluruh komputasi fisika, pengolahan citra (*Computer Vision*), OCR angka Sudoku
 
 ### 1. Mode Okay? Simulator & Auto-Solver
 
-#### Simulasi Fisika & Prediksi Bidikan Real-Time
-- **Deteksi Tumbukan Kontinu (*Continuous Ray-Circle vs Segment*)**: Menghitung tumbukan bola terhadap seluruh sisi dan sudut poligon secara eksak sehingga bola tidak menembus sudut tajam (*anti-tunneling*).
-- **Mekanika Benang Putih Tipis (*Pass-Through*)**: Bentuk target putih yang sangat tipis (seperti garis/benang) otomatis dikenali dengan properti `passThrough: true` — bola langsung menghancurkannya dan **menembus lurus tanpa memantul**, sesuai mekanika asli game *Okay?*.
-- **Prediksi Lintasan Multi-Pantulan Langsung (*Live Aim Prediction*)**: Saat Anda menarik bidikan di kanvas, jalur pantulan penuh, titik tumbukan, serta pratinjau target yang akan hancur langsung ditampilkan secara real-time sebelum bola dilepaskan.
-- **Audio Kalimba Sintetik**: Efek suara nada pentatonik menggunakan Web Audio API yang dapat dinyalakan atau dibisukan dari header.
+#### Simulasi Fisika 2D & Prediksi Bidikan Real-Time
+- **Deteksi Tumbukan Kontinu (*Continuous Ray-Circle vs Segment*)**: Menghitung tumbukan bola terhadap seluruh sisi dan titik sudut poligon secara presisi agar bola tidak menembus sudut (*anti-tunneling*).
+- **Mekanika Benang Putih Tipis (*Pass-Through*)**: Target putih yang sangat tipis (garis/benang) otomatis dikenali dengan `passThrough: true` — bola menghancurkannya dan **menembus lurus tanpa memantul**, sesuai fisika asli game *Okay?*.
+- **Prediksi Lintasan Multi-Pantulan Real-Time (*Live Aim Prediction*)**: Saat menarik bidikan di kanvas, jalur pantulan penuh, titik tumbukan, dan pratinjau target yang akan hancur langsung digambar secara real-time sebelum bola dilepaskan.
+- **Audio Kalimba Sintetik**: Efek suara nada pentatonik menggunakan Web Audio API dengan tombol mute/unmute di header.
 
 #### Pemindai Screenshot Otomatis (`Scan Gambar`)
-- **Upload, Drag & Drop, atau Paste (`Ctrl+V`)**: Unggah screenshot langsung dari ponsel atau tempel dari clipboard.
-- **Pipeline Computer Vision Resolusi Tinggi (`960px`)**:
-  - Mendeteksi warna latar belakang dominan secara otomatis.
-  - Memisahkan **target putih** (termasuk benang putih tipis 1–2 px) dan **dinding hitam** sekaligus mengabaikan bayangan tipis (*drop shadow*).
-  - Mempertahankan bentuk poligon bersudut 45° (seperti balok miring, trapesium, dan segilima berujung lancip) tanpa memaksanya menjadi persegi panjang.
-  - Menyaring elemen UI ponsel secara otomatis (status bar atas, toolbar bawah, serta tombol berongga seperti *"watch ad for hint"*).
+- **Upload, Drag & Drop, atau Paste (`Ctrl+V`)**: Mendukung unggah gambar dari perangkat maupun tempel langsung dari clipboard.
+- **Computer Vision Resolusi Tinggi (`960px`)**:
+  - Estimasi warna latar belakang dominan otomatis.
+  - Ekstraksi **target putih** (termasuk benang tipis 1–2 px) dan **dinding hitam** sambil mengabaikan bayangan (*drop shadow*).
+  - Pelestarian poligon bersudut 45° (trapesium, segilima/segienam miring) tanpa memaksanya menjadi persegi panjang.
+  - Penghapusan otomatis elemen UI ponsel (status bar atas, toolbar bawah, dan tombol berongga seperti *"watch ad for hint"*).
 - **Kalibrasi Interaktif**: Pengaturan sensitivitas deteksi, transparansi overlay gambar asli, tukar peran Target ↔ Dinding, ukuran jari-jari bola, dan tombol *Scan Ulang*.
 
 #### Auto-Solver Multi-Solusi & Analisis Zona Aman
 - **Pencarian Asinkron 3 Tahap** (*non-blocking* dengan tombol batal):
-  1. Memindai beragam titik awal dan sudut tembakan untuk menemukan beberapa rute pemenang yang berbeda.
-  2. Mengelompokkan rute yang unik agar pengguna mendapat variasi pilihan solusi (Solusi #1, #2, dst.).
-  3. Memusatkan setiap solusi ke tengah **Zona Aman (*Safe Zone*)** dan menghitung **Skor Kemudahan (0–100)** berdasarkan margin toleransi sudut (± derajat) dan toleransi posisi awal (± piksel).
-- **Kalibrasi Tembakan Presisi**: Geser `Posisi X`, `Posisi Y`, dan `Sudut Bidik` secara halus, lalu jalankan *Analisis* atau *Tembakkan*.
-- **Kontrol Kamera & Pemutaran**: Zoom in/out (scroll mouse atau cubit 2 jari), geser kanvas (*Pan*), `FIT`, `Fokus Awal` (zoom langsung ke titik mulai & panah bidik), *Slow-Mo* (`0.4x` / `1x`), dan 5 level bawaan siap uji.
+  1. Memindai beragam titik mulai dan sudut tembakan untuk menemukan berbagai rute pemenang.
+  2. Mengelompokkan rute yang unik agar tersedia beberapa alternatif solusi (Solusi #1, #2, dst.).
+  3. Memusatkan setiap solusi ke tengah **Zona Aman (*Safe Zone*)** dan menghitung **Skor Kemudahan (0–100)** berdasarkan toleransi sudut (± derajat) dan toleransi posisi (± piksel).
+- **Kalibrasi Tembakan Presisi**: Slider halus untuk `Posisi X`, `Posisi Y`, dan `Sudut Bidik` beserta tombol *Analisis* dan *Tembakkan*.
+- **Kontrol Kamera & Pemutaran**: Zoom in/out (scroll mouse / cubit 2 jari), geser kanvas (*Pan*), `FIT`, `Fokus Awal`, *Slow-Mo* (`0.4x` / `1x`), dan 5 level bawaan siap uji.
 
 #### Editor Bentuk & Posisi (`Atur Posisi`)
-- Tambah bentuk baru: Balok Target, Benang Putih (Nembus), Segitiga Target, Balok Dinding, dan Segitiga Dinding.
-- Manipulasi langsung di kanvas atau panel kontrol: seret posisi, geser presisi (*nudge*), pusatkan ke tengah layar, putar sudut, ubah skala, cermin horizontal (*Mirror X*), duplikat, balik tipe Target ↔ Dinding, aktif/nonaktifkan sifat *Nembus*, dan *Snap to Grid*.
+- Tambah Balok Target, Benang Putih (Nembus), Segitiga Target, Balok Dinding, dan Segitiga Dinding.
+- Transformasi lengkap: seret langsung, geser presisi (*nudge*), pusatkan ke tengah layar, putar, ubah skala, cermin horizontal (*Mirror X*), duplikat, tukar tipe Target ↔ Dinding, toggle *Mode Nembus*, dan *Snap to Grid*.
 
 ---
 
-### 2. Mode Sudoku Scanner & Auto-Solver
+### 2. Mode Sudoku Scanner & Auto-Solver (Multi-Size + 16×16 + Killer)
 
-#### Pemindai Screenshot Sudoku Otomatis (OCR Lokal)
-- **Deteksi Grid 9×9 Otomatis**: Menganalisis proyeksi garis horizontal dan vertikal (hingga resolusi `1080px`) untuk menemukan area papan 9×9 secara presisi sambil mengabaikan status bar, statistik atas, keypad angka, dan banner iklan di bawah layar.
-- **Pratinjau Overlay Grid Hijau**: Menampilkan thumbnail screenshot yang diunggah lengkap dengan kotak hijau penanda area 9×9 yang terdeteksi serta jumlah angka yang terbaca.
-- **Adaptif Terhadap Warna Sel**: Menghitung luminansi latar per sel dari tepi dalam sel sehingga tetap akurat membaca angka pada sel putih, sel sorotan abu-abu, sel terpilih berwarna biru, maupun aplikasi bertema gelap.
-- **Klasifikasi Angka 1–9 Presisi Tinggi**: Menggunakan ekstraksi komponen 8-connected, normalisasi glyph `24×24`, pencocokan **Normalized Cross-Correlation (NCC)** terhadap beberapa template font sans-serif, rasio aspek, dan analisis lubang topologi BFS (membedakan `8` dengan 2 lubang, `6`/`9`/`4` dengan 1 lubang berdasarkan posisi vertikal lubang, serta `1`/`2`/`3`/`5`/`7` tanpa lubang).
+#### Dukungan Ukuran Papan & Simbol Lengkap
+| Ukuran | Sub-Kotak | Simbol yang Digunakan | Dukungan |
+| :--- | :---: | :--- | :--- |
+| **4×4** | `2×2` | `1–4` | Klasik, Killer, Auto-Scan |
+| **6×6** | `2×3` | `1–6` | Klasik, Killer, Auto-Scan |
+| **8×8** | `2×4` | `1–8` | Klasik, Killer, Auto-Scan |
+| **9×9** | `3×3` | `1–9` | Klasik, Killer, Auto-Scan |
+| **12×12** | `3×4` | `1–9, A–C` | Klasik, Auto-Scan |
+| **16×16** | `4×4` | `1–9, A–G` | Klasik, Auto-Scan |
 
-#### Solver Cepat, Hint Logis & Papan Interaktif
-- **Bitmask + MRV Backtracking Solver**: Menyelesaikan papan Sudoku dalam hitungan sub-milidetik (`< 1 ms` untuk sebagian besar puzzle), sekaligus memverifikasi apakah puzzle memiliki **Solusi Unik** atau lebih dari satu solusi.
-- **Hint 1 Langkah**: Mencari langkah logis paling jelas terlebih dahulu secara berurutan:
-  1. **Naked Single** (sel yang hanya memiliki 1 kandidat sah).
-  2. **Hidden Single** (angka yang hanya dapat masuk di 1 posisi dalam baris, kolom, atau kotak 3×3).
-  3. **Logika Lanjutan** (deduksi solver jika tidak ada single dasar).
-- **Visualisasi Jelas & Validasi Real-Time**:
-  - Membedakan warna **Soal** (putih tebal), **Hint** (biru langit), **Solusi** (hijau zamrud), dan **Konflik Duplikat** (merah).
-  - Fitur **Tampilkan Kandidat** (*pencil marks* 1–9 kecil di setiap sel kosong).
-  - Sorotan otomatis pada baris, kolom, kotak 3×3, dan angka yang sama dengan sel terpilih.
-- **Input Fleksibel & Preset**: Mendukung klik + keypad layar (1–9 & hapus), navigasi keyboard penuh, *Reset Jawaban* (mempertahankan angka soal), *Bersihkan*, serta 3 contoh soal cepat (*Mudah*, *Sedang*, *Sulit*).
+#### Pemindai Screenshot Otomatis (`1800px` High-Res OCR)
+- **Auto-Deteksi Bingkai & Ukuran Grid**:
+  - Mendeteksi bingkai papan persegi maupun sedikit persegi panjang (seperti papan 16×16 di layar ponsel) sembari menolak banner header aplikasi yang tebal, status bar, keypad bawah, dan iklan.
+  - Memilih ukuran grid (`4`, `6`, `8`, `9`, `12`, `16`) secara otomatis dengan membandingkan kekuatan garis grid internal terhadap area tengah sel (*midpoint suppression*) sehingga papan `16×16` tidak pernah salah dikenali sebagai `4×4` atau `8×8`.
+  - Dilengkapi dropdown **Mode Scan** (`Auto Deteksi` atau kunci manual ke ukuran tertentu) dan tombol **Scan Ulang**.
+- **OCR Simbol `0–9` & `A–G` di Browser**:
+  - Estimasi luminansi latar adaptif per sel (bekerja pada tema terang, tema gelap, sel abu-abu, maupun sel terpilih berwarna biru).
+  - Normalisasi glyph `24×24`, pencocokan **Normalized Cross-Correlation (NCC)** multi-font sans-serif, rasio aspek, analisis lubang topologi BFS (`8`/`B` = 2 lubang, `0`/`4`/`6`/`9`/`A`/`D` = 1 lubang, lainnya = 0 lubang), serta fitur struktural untuk membedakan pasangan mirip (`B` vs `8`, `E` vs `F`, `C` vs `G`, `0` vs `1`).
+- **Deteksi Otomatis Killer Sudoku**:
+  - Mendeteksi keberadaan garis sangkar putus-putus (*inset dashed borders*) secara otomatis.
+  - Mengelompokkan sel yang terhubung menjadi sangkar menggunakan **Union-Find**.
+  - Membaca angka jumlah sangkar (1–2 digit) di pojok kiri atas setiap sangkar menggunakan 4-connectivity, threshold adaptif, serta pemisahan otomatis 2 digit yang berdempet di lembah proyeksi vertikal.
+
+#### Mesin Solver Cepat, Hint Bertahap & Editor Sangkar Killer
+- **Bitmask (hingga 16-bit) + Constraint Propagation + MRV Backtracking**:
+  - Menjalankan propagasi *Naked Singles*, *Hidden Singles* (baris, kolom, kotak), dan pemangkasan batas minimum/maksimum jumlah angka unik sangkar Killer di setiap node pencarian.
+  - Menyelesaikan papan `9×9` dalam sub-milidetik (`< 1 ms`), Killer Sudoku `9×9` (termasuk 0 angka awal), serta `16×16` dalam hitungan puluhan milidetik, lengkap dengan pemeriksaan **Solusi Unik** vs **Multi-Solusi**.
+- **Hint 1 Langkah**: Memberikan petunjuk satu sel demi satu sel disertai teknik logikanya secara berurutan:
+  1. **Killer Cage** (sangkar yang tinggal menyisakan 1 sel kosong).
+  2. **Naked Single** (sel yang hanya punya 1 kandidat sah).
+  3. **Hidden Single** (simbol yang hanya muat di 1 sel pada baris/kolom/kotak).
+  4. **Logika Lanjutan** (deduksi solver).
+- **Editor Sangkar Killer Interaktif**:
+  - Tampilan papan Killer dengan pewarnaan graf (*greedy coloring*) agar sangkar yang bertetangga memiliki warna tint berbeda, garis putus-putus hanya pada batas luar sangkar, serta badge jumlah di pojok kiri atas.
+  - Klik **+ Buat Sangkar** untuk memilih sel-sel anggota sangkar dan memasukkan target jumlahnya.
+  - Klik sel mana saja pada mode Killer untuk mengubah jumlah sangkar terpilih secara inline atau menghapus sangkar tersebut.
+- **6 Contoh Soal Cepat**: `9×9 Mudah`, `Killer 9×9` (29 sangkar, 0 angka awal), `16×16 (1–G)`, `4×4 Mini`, `6×6 Klasik`, dan `9×9 Sulit`.
 
 ---
 
 ### 3. Persistensi Otomatis Lintas Refresh
 
-Agar pekerjaan dan screenshot yang sudah diunggah tidak hilang saat halaman dimuat ulang (*refresh*):
-- **Mode Aktif** (`Okay? Solver` atau `Sudoku Solver`) disimpan otomatis di `localStorage` (`okay_app_mode_v1`).
-- **Workspace Okay?** (gambar screenshot, seluruh poligon bentuk, kalibrasi scan, pengaturan grid/jalur, dan hasil solusi) disimpan otomatis ke **IndexedDB** (`okay_simulator_workspace_db`) dengan fallback `localStorage`.
-- **Workspace Sudoku** (screenshot yang diunggah, kotak grid terdeteksi, angka soal, isian hint, solusi, dan toggle kandidat) disimpan otomatis ke **IndexedDB** terpisah (`okay_simulator_sudoku_db`) dengan fallback `localStorage`.
+Semua hasil scan dan progres tersimpan otomatis di browser sehingga tidak hilang saat halaman di-refresh:
+- **Mode Aplikasi Aktif** (`Okay? Solver` / `Sudoku Solver`): disimpan di `localStorage` (`okay_app_mode_v1`).
+- **Workspace Okay?**: screenshot, seluruh bentuk poligon, pengaturan kalibrasi scan, grid/jalur, dan hasil solusi disimpan di **IndexedDB** (`okay_simulator_workspace_db`) dengan fallback `localStorage`.
+- **Workspace Sudoku (Skema v2)**: ukuran papan (`4`–`16`), varian (`classic` / `killer`), daftar sangkar Killer, angka soal, hint, solusi, screenshot, kotak grid terdeteksi, dan toggle kandidat disimpan di **IndexedDB** (`okay_simulator_sudoku_db`) dengan dukungan kompatibilitas mundur (*backward compatibility*) untuk data v1.
 
 ---
 
 ## Struktur Proyek
 
 ```text
-├── index.html                      # Entry HTML, metadata judul & deskripsi aplikasi
+├── index.html                      # Entry HTML, judul & metadata halaman
 ├── metadata.json                   # Metadata aplikasi AI Studio
 ├── package.json                    # Dependensi & skrip npm
 ├── tsconfig.json                   # Konfigurasi TypeScript
@@ -90,7 +108,7 @@ Agar pekerjaan dan screenshot yang sudah diunggah tidak hilang saat halaman dimu
     │   ├── SolveTab.tsx            # Panel solusi aktif, daftar rute, kalibrasi presisi & preset
     │   ├── ScanTab.tsx             # Panel upload screenshot, sensitivitas CV & kalibrasi bola
     │   ├── EditTab.tsx             # Panel editor bentuk, transformasi & properti nembus
-    │   └── SudokuView.tsx          # Antarmuka lengkap Sudoku 9×9, keypad, OCR preview & hint
+    │   └── SudokuView.tsx          # Antarmuka multi-size Sudoku (4×4–16×16), Killer editor & OCR
     ├── engine/                     # Mesin fisika, CV & solver untuk Okay?
     │   ├── types.ts                # Tipe data bentuk, simulasi, analisis solusi & state UI
     │   ├── geometry.ts             # Utilitas vektor, poligon, convex hull & min-area OBB
@@ -102,12 +120,12 @@ Agar pekerjaan dan screenshot yang sudah diunggah tidak hilang saat halaman dimu
     │   ├── presets.ts              # 5 level bawaan Okay?
     │   ├── audio.ts                # Synthesizer suara kalimba berbasis Web Audio API
     │   ├── persistence.ts          # Persistensi IndexedDB + localStorage untuk Okay?
-    │   └── engine.test.ts          # Unit test geometri, fisika, solver, CV & persistensi Okay?
+    │   └── engine.test.ts          # 10 unit test geometri, fisika, solver, CV & persistensi
     └── sudoku/                     # Mesin solver, OCR & persistensi untuk Sudoku
-        ├── sudokuSolver.ts         # Bitmask + MRV solver, deteksi konflik, kandidat, hint & preset
-        ├── sudokuScanner.ts        # Deteksi grid 9×9 & OCR angka 1–9 (NCC + topologi lubang)
-        ├── sudokuPersistence.ts    # Persistensi IndexedDB + localStorage untuk Sudoku
-        └── sudoku.test.ts          # Unit test solver, konflik, kandidat, hint & validasi storage
+        ├── sudokuSolver.ts         # Multi-size (4–16) & Killer solver, konflik, kandidat & hint
+        ├── sudokuScanner.ts        # Auto-size detector, OCR 0–9/A–G & Killer cage/sum extractor
+        ├── sudokuPersistence.ts    # Persistensi IndexedDB v2 + localStorage untuk Sudoku
+        └── sudoku.test.ts          # 6 unit test (4×4, 6×6, 8×8, 9×9, 12×12, 16×16 & Killer)
 ```
 
 ---
@@ -115,7 +133,7 @@ Agar pekerjaan dan screenshot yang sudah diunggah tidak hilang saat halaman dimu
 ## Menjalankan Proyek Secara Lokal
 
 ### Prasyarat
-- **Node.js** versi 18 atau lebih baru (disarankan Node.js 20+)
+- **Node.js** versi 18+ (disarankan Node.js 20+)
 - **npm**
 
 ### 1. Instalasi Dependensi
@@ -141,7 +159,7 @@ npm run lint
 ```
 
 ### 5. Menjalankan Unit Test
-Aplikasi memiliki **15 unit test otomatis** menggunakan runner bawaan `node:test` melalui `tsx` yang memverifikasi geometri, fisika pantulan, mekanika tembus benang putih, deteksi CV, solver Okay?, persistensi, serta seluruh logika solver & hint Sudoku:
+Tersedia **16 unit test otomatis** berbasis `node:test` melalui `tsx` yang memverifikasi seluruh inti mesin Okay? (geometri, fisika pantulan, benang tipis tembus, CV, solver, persistensi) dan seluruh inti mesin Sudoku (konversi simbol `1–G`, solver `4×4`, `6×6`, `8×8`, `9×9`, `12×12`, `16×16`, Killer Sudoku 0-clue, deteksi konflik sangkar, kandidat, hint `Killer Cage`/`Naked Single`/`Hidden Single`, serta validasi penyimpanan v1/v2):
 
 ```bash
 npx --yes tsx --test src/engine/engine.test.ts src/sudoku/sudoku.test.ts
@@ -149,36 +167,28 @@ npx --yes tsx --test src/engine/engine.test.ts src/sudoku/sudoku.test.ts
 
 ---
 
-## Panduan Penggunaan Cepat
+## Panduan Penggunaan & Pintasan Keyboard
 
 ### Mode Okay? Solver
-1. **Uji Level Bawaan atau Upload Screenshot**:
-   - Pilih salah satu level di bagian **Level Bawaan**, atau klik **Upload Screenshot** / tekan `Ctrl+V` untuk memindai level dari screenshot HP.
-2. **Periksa Hasil Scan (Opsional)**:
-   - Buka tab **Scan Gambar** untuk menyesuaikan *Sensitivitas*, *Transparansi Overlay*, *Abaikan Status Bar*, atau klik **Tukar Target/Dinding**.
-   - Jika perlu penyesuaian manual, buka tab **Atur Posisi** untuk menggeser, memutar, menambah, atau mengubah properti *Nembus (Benang Putih)*.
-3. **Cari Solusi atau Bidik Manual**:
-   - Klik **Auto Solve** untuk menemukan lintasan pemenang beserta zona aman terbaik.
-   - Atau langsung klik & tarik di kanvas pada mode **Tembak** untuk melihat prediksi pantulan secara langsung.
+1. Pilih salah satu dari 5 **Level Bawaan**, atau unggah/tempel (`Ctrl+V`) screenshot game *Okay?*.
+2. Gunakan tab **Scan Gambar** untuk mengatur sensitivitas/overlay, atau tab **Atur Posisi** untuk penyempurnaan manual (termasuk opsi *Mode Nembus* untuk benang putih tipis).
+3. Klik **Auto Solve** untuk mencari solusi paling aman, atau tarik langsung di kanvas pada mode **Tembak** untuk melihat prediksi pantulan secara langsung.
 
 ### Mode Sudoku Solver
-1. Klik tombol **Sudoku Solver** pada bilah pemilih mode di bagian atas halaman.
-2. **Scan Screenshot atau Isi Manual**:
-   - Klik **Upload Screenshot**, seret file gambar ke area dropzone, atau tekan `Ctrl+V` untuk menempel screenshot Sudoku.
-   - Anda juga bisa mengklik sel mana saja lalu mengetik angka `1–9` (atau memilih dari keypad layar).
-3. **Selesaikan atau Minta Petunjuk**:
-   - Klik **Solve Semua** untuk langsung menampilkan seluruh jawaban valid (ditandai hijau).
-   - Klik **Hint 1 Langkah** untuk membuka satu sel secara bertahap lengkap dengan penjelasan teknik logikanya (*Naked Single* / *Hidden Single*).
-   - Aktifkan **Tampilkan Kandidat** untuk melihat semua angka kandidat yang sah di setiap sel kosong.
+1. Klik **Sudoku Solver** pada bilah pemilih mode di header atas.
+2. Pilih **Klasik** atau **Killer Sudoku** serta ukuran papan (`4×4` s.d. `16×16`), **atau** langsung unggah/tempel (`Ctrl+V`) screenshot dengan mode **Auto Deteksi** agar ukuran, varian, angka, dan sangkar terdeteksi otomatis.
+3. Jika perlu koreksi 1–2 angka atau jumlah sangkar Killer hasil scan, klik sel tersebut untuk mengedit angka lewat keyboard/keypad atau ubah jumlah sangkar di panel **Editor Sangkar Killer**.
+4. Klik **Solve Semua** untuk menampilkan seluruh solusi valid atau **Hint 1 Langkah** untuk petunjuk bertahap.
 
-### Pintasan Keyboard
+### Daftar Pintasan Keyboard
 | Mode | Tombol | Fungsi |
 | :--- | :--- | :--- |
-| **Umum** | `Ctrl + V` / `Cmd + V` | Tempel screenshot langsung dari clipboard ke mode yang sedang aktif |
+| **Umum** | `Ctrl + V` / `Cmd + V` | Tempel screenshot langsung dari clipboard ke mode yang aktif |
 | **Okay? (Edit)** | `Delete` / `Backspace` | Hapus bentuk yang sedang dipilih di kanvas |
-| **Sudoku** | `Arrow Up/Down/Left/Right` | Pindah sel terpilih pada papan 9×9 |
+| **Sudoku** | `Arrow Up/Down/Left/Right` | Pindah sel terpilih pada papan (mendukung semua ukuran `4×4`–`16×16`) |
 | **Sudoku** | `1` – `9` | Isi angka pada sel terpilih |
-| **Sudoku** | `0` / `Backspace` / `Delete` | Kosongkan angka pada sel terpilih |
+| **Sudoku** | `A` – `G` (atau `a` – `g`) | Isi simbol huruf pada papan `12×12` (`A–C`) dan `16×16` (`A–G`) |
+| **Sudoku** | `0` / `Backspace` / `Delete` | Kosongkan simbol pada sel terpilih |
 
 ---
 
@@ -195,13 +205,13 @@ npx --yes tsx --test src/engine/engine.test.ts src/sudoku/sudoku.test.ts
 
 ---
 
-## Tips Pemecahan Masalah (*Troubleshooting*)
+## Pemecahan Masalah (*Troubleshooting*)
 
-- **Bentuk pada screenshot Okay? kurang terdeteksi atau terlalu banyak noise**:
-  Buka tab **Scan Gambar**, geser slider **Sensitivitas Deteksi**, lalu sesuaikan **Transparansi Overlay** untuk mencocokkan poligon hijau/biru dengan gambar asli. Anda dapat menyempurnakan posisi satu-per-satu di tab **Atur Posisi**.
+- **Ukuran grid Sudoku tidak terdeteksi otomatis sesuai keinginan**:
+  Ubah pilihan **Auto Deteksi** pada kartu *Scan Screenshot Sudoku* ke ukuran spesifik (misalnya `6×6 Klasik`, `Killer 9×9`, atau `16×16 (1–G)`), lalu klik **Scan Ulang**.
+- **Pada Killer Sudoku, 1–2 angka jumlah sangkar yang sangat kecil kurang tepat** (misalnya `10` terbaca `11`):
+  Klik salah satu sel di dalam sangkar tersebut, ubah angka pada kolom **Jumlah** di panel **Editor Sangkar Killer**, lalu klik **Solve Semua**.
+- **Ada sel bertanda merah (*Bentrok*) setelah scan**:
+  Sel merah menandakan ada angka duplikat (pada baris, kolom, kotak, atau sangkar Killer) atau jumlah sangkar yang tidak mungkin dipenuhi. Klik sel terkait untuk mengoreksinya sebelum menekan **Solve Semua**.
 - **Benang putih tipis pada Okay? malah memantulkan bola**:
-  Pilih bentuk tersebut di mode **Edit Posisi**, lalu aktifkan opsi **Mode Nembus (Benang Putih)**.
-- **Ada 1–2 angka hasil scan Sudoku yang kurang tepat atau ditandai merah (bentrok)**:
-  Klik langsung sel tersebut di papan 9×9 dan ketik angka yang benar (atau tekan `Backspace` untuk menghapus), lalu klik **Solve Semua** kembali.
-- **Grid Sudoku tidak terdeteksi dari gambar**:
-  Pastikan screenshot menampilkan seluruh bingkai papan 9×9 secara utuh, tidak miring/terpotong, dan memiliki kontras garis grid yang cukup jelas.
+  Masuk ke tab **Atur Posisi**, klik bentuk benang tersebut, lalu aktifkan **Mode Nembus (Benang Putih)**.

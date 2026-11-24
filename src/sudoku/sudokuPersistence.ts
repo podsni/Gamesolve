@@ -1,9 +1,18 @@
-import { SudokuGrid } from './sudokuSolver';
+import {
+  isSupportedSize,
+  KillerCage,
+  SudokuGrid,
+  SudokuSize,
+  SudokuVariant,
+} from './sudokuSolver';
 import { SudokuGridRect } from './sudokuScanner';
 
 export interface PersistedSudokuState {
-  version: 1;
+  version: 2;
   savedAt: number;
+  size: SudokuSize;
+  variant: SudokuVariant;
+  cages: KillerCage[];
   givens: SudokuGrid;
   userEntries: SudokuGrid;
   solution: SudokuGrid | null;
@@ -40,26 +49,59 @@ function openSudokuDb(): Promise<IDBDatabase | null> {
   });
 }
 
-function isGrid9x9(raw: unknown): raw is SudokuGrid {
+function isGridNxN(raw: unknown, size: number): raw is SudokuGrid {
   return (
     Array.isArray(raw) &&
-    raw.length === 9 &&
-    raw.every((row) => Array.isArray(row) && row.length === 9)
+    raw.length === size &&
+    raw.every((row) => Array.isArray(row) && row.length === size)
   );
 }
 
+/**
+ * Validates both current v2 (multi-size + Killer) and legacy v1 (9x9) persisted records.
+ */
 export function isValidPersistedSudoku(raw: unknown): raw is PersistedSudokuState {
   if (!raw || typeof raw !== 'object') return false;
   const obj = raw as Record<string, unknown>;
-  if (obj.version !== 1) return false;
-  if (!isGrid9x9(obj.givens) || !isGrid9x9(obj.userEntries)) return false;
-  return true;
+  if (obj.version === 1) {
+    return isGridNxN(obj.givens, 9) && isGridNxN(obj.userEntries, 9);
+  }
+  if (obj.version === 2) {
+    if (typeof obj.size !== 'number' || !isSupportedSize(obj.size)) return false;
+    if (obj.variant !== 'classic' && obj.variant !== 'killer') return false;
+    if (!isGridNxN(obj.givens, obj.size) || !isGridNxN(obj.userEntries, obj.size)) {
+      return false;
+    }
+    if (!Array.isArray(obj.cages)) return false;
+    return true;
+  }
+  return false;
+}
+
+function upgradeToV2(raw: Record<string, unknown>): PersistedSudokuState {
+  if (raw.version === 2) return raw as unknown as PersistedSudokuState;
+  return {
+    version: 2,
+    savedAt: typeof raw.savedAt === 'number' ? raw.savedAt : Date.now(),
+    size: 9,
+    variant: 'classic',
+    cages: [],
+    givens: raw.givens as SudokuGrid,
+    userEntries: raw.userEntries as SudokuGrid,
+    solution: (raw.solution as SudokuGrid | null) ?? null,
+    uploadedImageDataUrl: (raw.uploadedImageDataUrl as string | null) ?? null,
+    gridRect: (raw.gridRect as SudokuGridRect | null) ?? null,
+    imageWidth: typeof raw.imageWidth === 'number' ? raw.imageWidth : 0,
+    imageHeight: typeof raw.imageHeight === 'number' ? raw.imageHeight : 0,
+    detectedCount: typeof raw.detectedCount === 'number' ? raw.detectedCount : 0,
+    showCandidates: Boolean(raw.showCandidates),
+  };
 }
 
 export async function saveSudokuState(state: PersistedSudokuState): Promise<boolean> {
   const payload: PersistedSudokuState = {
     ...state,
-    version: 1,
+    version: 2,
     savedAt: Date.now(),
   };
 
@@ -108,7 +150,9 @@ export async function loadSudokuState(): Promise<PersistedSudokuState | null> {
       }
     });
     db.close();
-    if (isValidPersistedSudoku(rec)) return rec;
+    if (isValidPersistedSudoku(rec)) {
+      return upgradeToV2(rec as unknown as Record<string, unknown>);
+    }
   }
 
   try {
@@ -116,7 +160,9 @@ export async function loadSudokuState(): Promise<PersistedSudokuState | null> {
       const raw = localStorage.getItem(LS_FALLBACK_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (isValidPersistedSudoku(parsed)) return parsed;
+        if (isValidPersistedSudoku(parsed)) {
+          return upgradeToV2(parsed as unknown as Record<string, unknown>);
+        }
       }
     }
   } catch {

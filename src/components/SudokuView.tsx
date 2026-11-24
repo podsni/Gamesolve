@@ -13,20 +13,34 @@ import {
   Sparkles,
   Delete,
   Grid3X3,
+  Plus,
+  Layers,
 } from 'lucide-react';
 import {
   cloneGrid,
   countFilledCells,
   createEmptyGrid,
+  digitToSymbol,
   findConflicts,
+  getBoxDims,
+  getCageHeadCell,
   getCellCandidates,
   getNextSudokuHint,
+  KillerCage,
   solveSudoku,
   SUDOKU_PRESETS,
   SudokuGrid,
   SudokuHint,
+  SudokuSize,
+  SudokuVariant,
+  SUPPORTED_SUDOKU_SIZES,
+  symbolToDigit,
 } from '../sudoku/sudokuSolver';
-import { scanSudokuFromImage, SudokuGridRect } from '../sudoku/sudokuScanner';
+import {
+  scanSudokuFromImage,
+  SudokuGridRect,
+  SudokuScanOptions,
+} from '../sudoku/sudokuScanner';
 import {
   loadSudokuState,
   PersistedSudokuState,
@@ -43,18 +57,79 @@ interface SolveMeta {
   invalidReason: string | null;
 }
 
+type ScanModeChoice =
+  | 'auto'
+  | 'classic-4'
+  | 'classic-6'
+  | 'classic-8'
+  | 'classic-9'
+  | 'classic-12'
+  | 'classic-16'
+  | 'killer-9';
+
+const GRID_TEMPLATE_CLASSES: Record<SudokuSize, string> = {
+  4: 'grid-cols-4 grid-rows-4',
+  6: 'grid-cols-6 grid-rows-6',
+  8: 'grid-cols-8 grid-rows-8',
+  9: 'grid-cols-9 grid-rows-9',
+  12: 'grid-cols-12 grid-rows-12',
+  16: 'grid-cols-[repeat(16,minmax(0,1fr))] grid-rows-[repeat(16,minmax(0,1fr))]',
+};
+
+const CELL_TEXT_CLASSES: Record<SudokuSize, string> = {
+  4: 'text-3xl sm:text-4xl',
+  6: 'text-2xl sm:text-3xl',
+  8: 'text-xl sm:text-2xl',
+  9: 'text-lg sm:text-2xl',
+  12: 'text-sm sm:text-base',
+  16: 'text-[11px] sm:text-sm',
+};
+
+const CAGE_TINT_CLASSES = [
+  'bg-sky-500/10',
+  'bg-emerald-500/10',
+  'bg-amber-500/10',
+  'bg-violet-500/10',
+  'bg-rose-500/10',
+  'bg-cyan-500/10',
+];
+
 function mergeGrids(givens: SudokuGrid, userEntries: SudokuGrid): SudokuGrid {
   return givens.map((row, r) =>
-    row.map((val, c) => (val !== 0 ? val : userEntries[r][c]))
+    row.map((val, c) => (val !== 0 ? val : userEntries[r]?.[c] ?? 0))
   );
 }
 
+function scanModeToOptions(mode: ScanModeChoice): SudokuScanOptions {
+  switch (mode) {
+    case 'auto':
+      return { sizeHint: 'auto', variantHint: 'auto' };
+    case 'classic-4':
+      return { sizeHint: 4, variantHint: 'classic' };
+    case 'classic-6':
+      return { sizeHint: 6, variantHint: 'classic' };
+    case 'classic-8':
+      return { sizeHint: 8, variantHint: 'classic' };
+    case 'classic-9':
+      return { sizeHint: 9, variantHint: 'classic' };
+    case 'classic-12':
+      return { sizeHint: 12, variantHint: 'classic' };
+    case 'classic-16':
+      return { sizeHint: 16, variantHint: 'classic' };
+    case 'killer-9':
+      return { sizeHint: 9, variantHint: 'killer' };
+  }
+}
+
 export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
+  const [size, setSize] = useState<SudokuSize>(9);
+  const [variant, setVariant] = useState<SudokuVariant>('classic');
+  const [cages, setCages] = useState<KillerCage[]>([]);
   const [givens, setGivens] = useState<SudokuGrid>(() =>
     cloneGrid(SUDOKU_PRESETS[0].board)
   );
   const [userEntries, setUserEntries] = useState<SudokuGrid>(() =>
-    createEmptyGrid()
+    createEmptyGrid(9)
   );
   const [solution, setSolution] = useState<SudokuGrid | null>(null);
   const [selectedCell, setSelectedCell] = useState<[number, number] | null>([
@@ -64,7 +139,13 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
   const [solveMeta, setSolveMeta] = useState<SolveMeta | null>(null);
   const [showCandidates, setShowCandidates] = useState(false);
 
+  // Killer cage editor state
+  const [cageEditMode, setCageEditMode] = useState(false);
+  const [draftCageCells, setDraftCageCells] = useState<string[]>([]);
+  const [draftCageSum, setDraftCageSum] = useState('10');
+
   // Uploaded screenshot & OCR scan preview state
+  const [scanMode, setScanMode] = useState<ScanModeChoice>('auto');
   const [uploadedImageDataUrl, setUploadedImageDataUrl] = useState<
     string | null
   >(null);
@@ -79,32 +160,93 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
   const hydratedRef = useRef(false);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Working grid (givens + step hints) and displayed grid (+ full solution if solved)
+  const activeCages = useMemo(
+    () => (variant === 'killer' ? cages : []),
+    [variant, cages]
+  );
+
   const workingGrid = useMemo(
     () => mergeGrids(givens, userEntries),
     [givens, userEntries]
   );
 
   const displayGrid = useMemo(() => {
-    if (!solution) return workingGrid;
+    if (!solution || solution.length !== size) return workingGrid;
     return workingGrid.map((row, r) =>
       row.map((val, c) => (val !== 0 ? val : solution[r][c]))
     );
-  }, [workingGrid, solution]);
+  }, [workingGrid, solution, size]);
 
-  const conflicts = useMemo(() => findConflicts(workingGrid), [workingGrid]);
+  const conflicts = useMemo(
+    () => findConflicts(workingGrid, { size, cages: activeCages }),
+    [workingGrid, size, activeCages]
+  );
+
+  const totalCells = size * size;
   const givenCount = useMemo(() => countFilledCells(givens), [givens]);
   const filledCount = useMemo(() => countFilledCells(displayGrid), [displayGrid]);
-  const isComplete = filledCount === 81 && conflicts.size === 0;
+  const isComplete = filledCount === totalCells && conflicts.size === 0;
+  const { boxRows, boxCols } = useMemo(() => getBoxDims(size), [size]);
 
-  const selectedValue = selectedCell
-    ? displayGrid[selectedCell[0]][selectedCell[1]]
-    : 0;
+  const selectedValue =
+    selectedCell &&
+    selectedCell[0] < size &&
+    selectedCell[1] < size
+      ? displayGrid[selectedCell[0]][selectedCell[1]]
+      : 0;
+
+  // Fast lookup maps for Killer cage rendering & inline editing
+  const { cellToCage, cageHeadMap, cageColorIdx } = useMemo(() => {
+    const map = new Map<string, KillerCage>();
+    const heads = new Map<string, KillerCage>();
+    const colorMap = new Map<number, number>();
+
+    for (const cg of activeCages) {
+      for (const [r, c] of cg.cells) {
+        map.set(`${r},${c}`, cg);
+      }
+      const head = getCageHeadCell(cg);
+      if (head) heads.set(`${head[0]},${head[1]}`, cg);
+    }
+
+    // Greedy graph coloring so neighboring cages never share the same background tint
+    for (const cg of activeCages) {
+      const usedColors = new Set<number>();
+      for (const [r, c] of cg.cells) {
+        const neighbors: [number, number][] = [
+          [r - 1, c],
+          [r + 1, c],
+          [r, c - 1],
+          [r, c + 1],
+        ];
+        for (const [nr, nc] of neighbors) {
+          const nb = map.get(`${nr},${nc}`);
+          if (nb && nb.id !== cg.id && colorMap.has(nb.id)) {
+            usedColors.add(colorMap.get(nb.id)!);
+          }
+        }
+      }
+      let chosen = 0;
+      while (usedColors.has(chosen) && chosen < CAGE_TINT_CLASSES.length) {
+        chosen++;
+      }
+      colorMap.set(cg.id, chosen % CAGE_TINT_CLASSES.length);
+    }
+
+    return { cellToCage: map, cageHeadMap: heads, cageColorIdx: colorMap };
+  }, [activeCages]);
+
+  const selectedCage = selectedCell
+    ? cellToCage.get(`${selectedCell[0]},${selectedCell[1]}`) ?? null
+    : null;
 
   const buildSnapshot = useCallback(
     (overrides?: Partial<PersistedSudokuState>): PersistedSudokuState => ({
-      version: 1,
+      version: 2,
       savedAt: Date.now(),
+      size,
+      variant,
+      cages,
       givens,
       userEntries,
       solution,
@@ -117,6 +259,9 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
       ...overrides,
     }),
     [
+      size,
+      variant,
+      cages,
       givens,
       userEntries,
       solution,
@@ -136,6 +281,9 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
       const saved = await loadSudokuState();
       if (cancelled) return;
       if (saved) {
+        setSize(saved.size);
+        setVariant(saved.variant);
+        setCages(saved.cages ?? []);
         setGivens(cloneGrid(saved.givens));
         setUserEntries(cloneGrid(saved.userEntries));
         setSolution(saved.solution ? cloneGrid(saved.solution) : null);
@@ -145,6 +293,7 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
         setImageHeight(saved.imageHeight ?? 0);
         setDetectedCount(saved.detectedCount ?? 0);
         setShowCandidates(Boolean(saved.showCandidates));
+        setSelectedCell([0, 0]);
       }
       hydratedRef.current = true;
     };
@@ -166,6 +315,46 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
     }, 180);
   }, [buildSnapshot]);
 
+  const switchSize = useCallback(
+    (nextSize: SudokuSize, keepVariant?: SudokuVariant) => {
+      const nextVar = keepVariant ?? variant;
+      setSize(nextSize);
+      setVariant(nextVar);
+      setGivens(createEmptyGrid(nextSize));
+      setUserEntries(createEmptyGrid(nextSize));
+      setCages([]);
+      setSolution(null);
+      setActiveHint(null);
+      setSolveMeta(null);
+      setCageEditMode(false);
+      setDraftCageCells([]);
+      setSelectedCell([0, 0]);
+      if (nextSize >= 12) setShowCandidates(false);
+    },
+    [variant]
+  );
+
+  const switchVariant = useCallback(
+    (nextVariant: SudokuVariant) => {
+      if (nextVariant === variant) return;
+      setVariant(nextVariant);
+      setSolution(null);
+      setActiveHint(null);
+      setSolveMeta(null);
+      setCageEditMode(false);
+      setDraftCageCells([]);
+      if (nextVariant === 'killer' && size > 9) {
+        // Default Killer to 9x9 when switching from 12x12/16x16
+        setSize(9);
+        setGivens(createEmptyGrid(9));
+        setUserEntries(createEmptyGrid(9));
+        setCages([]);
+        setSelectedCell([0, 0]);
+      }
+    },
+    [variant, size]
+  );
+
   const setCellDigit = useCallback(
     (row: number, col: number, digit: number) => {
       setGivens((prev) => {
@@ -186,11 +375,76 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
     []
   );
 
+  const handleSaveDraftCage = useCallback(() => {
+    const parsedSum = parseInt(draftCageSum, 10);
+    if (draftCageCells.length === 0) {
+      onToast('Pilih minimal 1 sel di papan untuk membentuk sangkar.');
+      return;
+    }
+    if (Number.isNaN(parsedSum) || parsedSum <= 0) {
+      onToast('Masukkan jumlah sangkar yang valid (> 0).');
+      return;
+    }
+    const chosenSet = new Set(draftCageCells);
+    const chosenCoords: [number, number][] = draftCageCells.map((key) => {
+      const [r, c] = key.split(',').map(Number);
+      return [r, c];
+    });
+
+    setCages((prev) => {
+      // Remove chosen cells from any existing cages
+      const cleaned = prev
+        .map((cg) => ({
+          ...cg,
+          cells: cg.cells.filter(([r, c]) => !chosenSet.has(`${r},${c}`)),
+        }))
+        .filter((cg) => cg.cells.length > 0);
+      const maxId = cleaned.reduce((m, cg) => Math.max(m, cg.id), 0);
+      return [
+        ...cleaned,
+        { id: maxId + 1, sum: parsedSum, cells: chosenCoords },
+      ];
+    });
+    setDraftCageCells([]);
+    setSolution(null);
+    setSolveMeta(null);
+    onToast(
+      `Sangkar (${chosenCoords.length} sel, jumlah ${parsedSum}) tersimpan.`
+    );
+  }, [draftCageCells, draftCageSum, onToast]);
+
+  const handleUpdateSelectedCageSum = useCallback(
+    (cageId: number, nextSumStr: string) => {
+      const parsed = parseInt(nextSumStr, 10);
+      setCages((prev) =>
+        prev.map((cg) =>
+          cg.id === cageId
+            ? { ...cg, sum: Number.isNaN(parsed) ? 0 : Math.max(0, parsed) }
+            : cg
+        )
+      );
+      setSolution(null);
+      setSolveMeta(null);
+    },
+    []
+  );
+
+  const handleRemoveSelectedCage = useCallback(
+    (cageId: number) => {
+      setCages((prev) => prev.filter((cg) => cg.id !== cageId));
+      setSolution(null);
+      setSolveMeta(null);
+      onToast('Sangkar dihapus.');
+    },
+    [onToast]
+  );
+
   const runScanOnImage = useCallback(
-    (img: HTMLImageElement, dataUrl: string) => {
+    (img: HTMLImageElement, dataUrl: string, overrideMode?: ScanModeChoice) => {
       setScanning(true);
       try {
-        const res = scanSudokuFromImage(img);
+        const activeMode = overrideMode ?? scanMode;
+        const res = scanSudokuFromImage(img, scanModeToOptions(activeMode));
         if (!res.gridRect) {
           setUploadedImageDataUrl(dataUrl);
           setGridRect(null);
@@ -198,18 +452,26 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
           setImageHeight(res.imageHeight);
           setDetectedCount(0);
           onToast(
-            'Grid 9×9 tidak terdeteksi jelas. Pastikan screenshot menampilkan seluruh papan Sudoku.'
+            'Grid Sudoku tidak terdeteksi jelas. Pastikan screenshot menampilkan seluruh papan.'
           );
           return;
         }
 
         const nextGivens = cloneGrid(res.board);
-        const emptyUser = createEmptyGrid();
+        const emptyUser = createEmptyGrid(res.size);
+        setSize(res.size);
+        setVariant(res.variant);
+        setCages(res.cages);
         setGivens(nextGivens);
         setUserEntries(emptyUser);
         setSolution(null);
         setActiveHint(null);
         setSolveMeta(null);
+        setCageEditMode(false);
+        setDraftCageCells([]);
+        setSelectedCell([0, 0]);
+        if (res.size >= 12) setShowCandidates(false);
+
         setUploadedImageDataUrl(dataUrl);
         setGridRect(res.gridRect);
         setImageWidth(res.imageWidth);
@@ -219,6 +481,9 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
         hydratedRef.current = true;
         void saveSudokuState(
           buildSnapshot({
+            size: res.size,
+            variant: res.variant,
+            cages: res.cages,
             givens: nextGivens,
             userEntries: emptyUser,
             solution: null,
@@ -227,24 +492,31 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
             imageWidth: res.imageWidth,
             imageHeight: res.imageHeight,
             detectedCount: res.detectedCount,
+            showCandidates: res.size >= 12 ? false : showCandidates,
           })
         );
 
-        const scannedConflicts = findConflicts(nextGivens);
+        const scannedConflicts = findConflicts(nextGivens, {
+          size: res.size,
+          cages: res.variant === 'killer' ? res.cages : [],
+        });
+        const label =
+          res.variant === 'killer'
+            ? `Killer Sudoku ${res.size}×${res.size} (${res.detectedCount} angka, ${res.detectedCageCount} sangkar)`
+            : `Sudoku ${res.size}×${res.size} (${res.detectedCount} simbol)`;
+
         if (scannedConflicts.size > 0) {
           onToast(
-            `Memindai ${res.detectedCount} angka (ada angka bentrok merah, silakan koreksi sel tersebut).`
+            `Terdeteksi ${label} — ada sel bentrok merah, silakan koreksi sebelum solve.`
           );
         } else {
-          onToast(
-            `Berhasil memindai ${res.detectedCount} angka dari screenshot Sudoku.`
-          );
+          onToast(`Berhasil memindai ${label}.`);
         }
       } finally {
         setScanning(false);
       }
     },
-    [buildSnapshot, onToast]
+    [scanMode, buildSnapshot, showCandidates, onToast]
   );
 
   const handleImageFile = useCallback(
@@ -267,13 +539,16 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
     [onToast, runScanOnImage]
   );
 
-  const handleRescan = useCallback(() => {
-    if (!uploadedImageDataUrl) return;
-    const img = new Image();
-    img.onload = () => runScanOnImage(img, uploadedImageDataUrl);
-    img.onerror = () => onToast('Gagal memuat ulang gambar untuk scan.');
-    img.src = uploadedImageDataUrl;
-  }, [uploadedImageDataUrl, runScanOnImage, onToast]);
+  const handleRescan = useCallback(
+    (overrideMode?: ScanModeChoice) => {
+      if (!uploadedImageDataUrl) return;
+      const img = new Image();
+      img.onload = () => runScanOnImage(img, uploadedImageDataUrl, overrideMode);
+      img.onerror = () => onToast('Gagal memuat ulang gambar untuk scan.');
+      img.src = uploadedImageDataUrl;
+    },
+    [uploadedImageDataUrl, runScanOnImage, onToast]
+  );
 
   // Clipboard paste support while SudokuView is mounted
   useEffect(() => {
@@ -291,7 +566,7 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
     return () => window.removeEventListener('paste', onPaste);
   }, [handleImageFile]);
 
-  // Keyboard navigation & digit entry for selected cell
+  // Keyboard navigation & symbol entry (1-9, A-G) for selected cell
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -299,16 +574,18 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
         target &&
         (target.tagName === 'INPUT' ||
           target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
           target.isContentEditable)
       ) {
         return;
       }
-      if (!selectedCell) return;
+      if (!selectedCell || cageEditMode) return;
       const [r, c] = selectedCell;
 
-      if (e.key >= '1' && e.key <= '9') {
+      const parsed = symbolToDigit(e.key, size);
+      if (parsed !== null) {
         e.preventDefault();
-        setCellDigit(r, c, Number(e.key));
+        setCellDigit(r, c, parsed);
       } else if (
         e.key === 'Backspace' ||
         e.key === 'Delete' ||
@@ -318,24 +595,24 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
         setCellDigit(r, c, 0);
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setSelectedCell([(r + 8) % 9, c]);
+        setSelectedCell([(r + size - 1) % size, c]);
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setSelectedCell([(r + 1) % 9, c]);
+        setSelectedCell([(r + 1) % size, c]);
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault();
-        setSelectedCell([r, (c + 8) % 9]);
+        setSelectedCell([r, (c + size - 1) % size]);
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
-        setSelectedCell([r, (c + 1) % 9]);
+        setSelectedCell([r, (c + 1) % size]);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedCell, setCellDigit]);
+  }, [selectedCell, cageEditMode, size, setCellDigit]);
 
   const handleSolveAll = useCallback(() => {
-    const res = solveSudoku(workingGrid);
+    const res = solveSudoku(workingGrid, { size, cages: activeCages });
     if (!res.solved || !res.solution) {
       setSolution(null);
       setSolveMeta({
@@ -363,28 +640,28 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
 
     onToast(
       res.hasMultipleSolutions
-        ? `Solusi ditemukan dalam ${res.solveTimeMs.toFixed(1)} ms (memiliki lebih dari 1 solusi).`
-        : `Sudoku terselesaikan 100% dalam ${res.solveTimeMs.toFixed(1)} ms (Solusi Unik).`
+        ? `Solusi ${size}×${size} ditemukan dalam ${res.solveTimeMs.toFixed(1)} ms (lebih dari 1 solusi).`
+        : `${variant === 'killer' ? 'Killer Sudoku' : 'Sudoku'} ${size}×${size} terselesaikan 100% dalam ${res.solveTimeMs.toFixed(1)} ms (Solusi Unik).`
     );
-  }, [workingGrid, buildSnapshot, onToast]);
+  }, [workingGrid, size, activeCages, variant, buildSnapshot, onToast]);
 
   const handleHintStep = useCallback(() => {
     if (conflicts.size > 0) {
-      onToast('Perbaiki dulu angka bentrok (merah) sebelum meminta hint.');
+      onToast('Perbaiki dulu sel bentrok (merah) sebelum meminta hint.');
       return;
     }
     const base = solution ? displayGrid : workingGrid;
-    if (countFilledCells(base) === 81) {
-      onToast('Semua 81 sel Sudoku sudah terisi lengkap.');
+    if (countFilledCells(base) === totalCells) {
+      onToast(`Semua ${totalCells} sel Sudoku sudah terisi lengkap.`);
       return;
     }
-    const hint = getNextSudokuHint(workingGrid);
+    const hint = getNextSudokuHint(workingGrid, { size, cages: activeCages });
     if (!hint) {
       setSolveMeta({
         solveTimeMs: 0,
         hasMultipleSolutions: false,
         invalidReason:
-          'Papan saat ini tidak memiliki solusi yang sah. Cek kembali angka yang terisi.',
+          'Papan saat ini tidak memiliki solusi yang sah. Cek kembali simbol atau sangkar Killer yang terisi.',
       });
       onToast('Tidak dapat menemukan hint — papan tidak memiliki solusi sah.');
       return;
@@ -397,47 +674,84 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
     setActiveHint(hint);
     setSolveMeta(null);
     onToast(
-      `Hint (${hint.technique}): Baris ${hint.row + 1}, Kolom ${hint.col + 1} = ${hint.value}`
+      `Hint (${hint.technique}): Baris ${hint.row + 1}, Kolom ${hint.col + 1} = ${hint.symbol}`
     );
-  }, [conflicts.size, solution, displayGrid, workingGrid, userEntries, onToast]);
+  }, [
+    conflicts.size,
+    solution,
+    displayGrid,
+    workingGrid,
+    totalCells,
+    size,
+    activeCages,
+    userEntries,
+    onToast,
+  ]);
 
   const handleResetAnswers = useCallback(() => {
-    setUserEntries(createEmptyGrid());
+    setUserEntries(createEmptyGrid(size));
     setSolution(null);
     setActiveHint(null);
     setSolveMeta(null);
-    onToast('Jawaban direset — angka soal tetap dipertahankan.');
-  }, [onToast]);
+    onToast('Jawaban direset — soal & sangkar tetap dipertahankan.');
+  }, [size, onToast]);
 
   const handleClearBoard = useCallback(() => {
-    const empty = createEmptyGrid();
-    setGivens(empty);
-    setUserEntries(createEmptyGrid());
+    setGivens(createEmptyGrid(size));
+    setUserEntries(createEmptyGrid(size));
+    setCages([]);
     setSolution(null);
     setActiveHint(null);
     setSolveMeta(null);
+    setCageEditMode(false);
+    setDraftCageCells([]);
     setUploadedImageDataUrl(null);
     setGridRect(null);
     setDetectedCount(0);
     setSelectedCell([0, 0]);
     onToast('Papan Sudoku dibersihkan.');
-  }, [onToast]);
+  }, [size, onToast]);
 
   const handleLoadPreset = useCallback(
-    (board: SudokuGrid, label: string) => {
-      setGivens(cloneGrid(board));
-      setUserEntries(createEmptyGrid());
+    (preset: (typeof SUDOKU_PRESETS)[number]) => {
+      setSize(preset.size);
+      setVariant(preset.variant);
+      setCages(
+        preset.cages
+          ? preset.cages.map((cg) => ({
+              ...cg,
+              cells: cg.cells.map(([r, c]) => [r, c] as [number, number]),
+            }))
+          : []
+      );
+      setGivens(cloneGrid(preset.board));
+      setUserEntries(createEmptyGrid(preset.size));
       setSolution(null);
       setActiveHint(null);
       setSolveMeta(null);
+      setCageEditMode(false);
+      setDraftCageCells([]);
       setUploadedImageDataUrl(null);
       setGridRect(null);
       setDetectedCount(0);
       setSelectedCell([0, 0]);
-      onToast(`Level contoh "${label}" dimuat.`);
+      if (preset.size >= 12) setShowCandidates(false);
+      onToast(`Contoh "${preset.label}" dimuat.`);
     },
     [onToast]
   );
+
+  const symbolsList = useMemo(
+    () => Array.from({ length: size }, (_, i) => i + 1),
+    [size]
+  );
+
+  const boardMaxWidthClass =
+    size >= 16
+      ? 'max-w-[560px]'
+      : size >= 12
+        ? 'max-w-[520px]'
+        : 'max-w-[476px]';
 
   return (
     <main className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
@@ -454,23 +768,99 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
         }}
       />
 
-      {/* LEFT COLUMN: Interactive 9x9 Sudoku Board + Keypad + Primary Actions */}
-      <section className="lg:col-span-6 flex flex-col items-center gap-3.5 w-full">
+      {/* LEFT COLUMN: Variant/Size Bar + Interactive Multi-Size Board + Actions + Keypad */}
+      <section className="lg:col-span-7 flex flex-col items-center gap-3 w-full">
+        {/* Variant & Size Selector Strip */}
+        <div
+          className={`w-full ${boardMaxWidthClass} bg-slate-900/90 border border-white/10 rounded-2xl p-2.5 flex flex-wrap items-center justify-between gap-2`}
+        >
+          <div className="flex items-center gap-1 bg-slate-950/70 p-1 rounded-xl border border-white/10">
+            <button
+              type="button"
+              data-testid="sudoku-variant-classic"
+              aria-pressed={variant === 'classic'}
+              onClick={() => switchVariant('classic')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                variant === 'classic'
+                  ? 'bg-emerald-500 text-slate-950'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              Klasik
+            </button>
+            <button
+              type="button"
+              data-testid="sudoku-variant-killer"
+              aria-pressed={variant === 'killer'}
+              onClick={() => switchVariant('killer')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                variant === 'killer'
+                  ? 'bg-amber-400 text-slate-950'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              Killer Sudoku
+            </button>
+          </div>
+
+          <div
+            role="group"
+            aria-label="Pilih ukuran papan Sudoku"
+            className="flex flex-wrap items-center gap-1"
+          >
+            {SUPPORTED_SUDOKU_SIZES.map((sz) => {
+              const disabledForKiller = variant === 'killer' && sz > 9;
+              return (
+                <button
+                  key={sz}
+                  type="button"
+                  data-testid={`sudoku-size-${sz}`}
+                  disabled={disabledForKiller}
+                  aria-pressed={size === sz}
+                  onClick={() => switchSize(sz)}
+                  className={`px-2 py-1 rounded-lg text-[11px] font-bold border transition disabled:opacity-30 ${
+                    size === sz
+                      ? 'bg-sky-500/25 border-sky-400/70 text-sky-100'
+                      : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                  }`}
+                >
+                  {sz}×{sz}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Board Card */}
-        <div className="w-full max-w-[468px] bg-slate-900/90 border border-white/10 rounded-2xl p-3 sm:p-4 shadow-2xl">
+        <div
+          className={`w-full ${boardMaxWidthClass} bg-slate-900/90 border border-white/10 rounded-2xl p-2.5 sm:p-4 shadow-2xl`}
+        >
           <div className="flex items-center justify-between gap-2 mb-2.5">
             <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
               <Grid3X3 className="w-4 h-4 text-emerald-400" aria-hidden="true" />
-              <span>Papan Sudoku 9×9</span>
+              <span data-testid="sudoku-board-title">
+                {variant === 'killer'
+                  ? `Killer Sudoku ${size}×${size}`
+                  : `Papan Sudoku ${size}×${size}`}
+                {size >= 12 ? ` (1–${digitToSymbol(size)})` : ''}
+              </span>
             </div>
             <div className="flex items-center gap-2 text-[11px] font-semibold">
+              {variant === 'killer' && (
+                <span
+                  data-testid="sudoku-cage-count"
+                  className="text-amber-300"
+                >
+                  {activeCages.length} sangkar
+                </span>
+              )}
               <span className="text-slate-400">
                 Terisi:{' '}
                 <strong
                   data-testid="sudoku-filled-count"
                   className={isComplete ? 'text-emerald-400' : 'text-white'}
                 >
-                  {filledCount}/81
+                  {filledCount}/{totalCells}
                 </strong>
               </span>
               {conflicts.size > 0 && (
@@ -482,63 +872,89 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
             </div>
           </div>
 
-          {/* 9x9 Grid */}
+          {/* Dynamic N x N Grid */}
           <div
             data-testid="sudoku-board"
+            data-size={size}
+            data-variant={variant}
             role="grid"
-            aria-label="Papan Sudoku 9 kali 9"
-            className="w-full aspect-square grid grid-cols-9 grid-rows-9 bg-slate-950 border-2 border-slate-500/80 rounded-xl overflow-hidden select-none"
+            aria-label={`Papan Sudoku ${size} kali ${size}`}
+            className={`w-full aspect-square grid ${GRID_TEMPLATE_CLASSES[size]} bg-slate-950 border-2 border-slate-500/85 rounded-xl overflow-hidden select-none`}
           >
             {displayGrid.map((rowVals, r) =>
               rowVals.map((val, c) => {
-                const isGiven = givens[r][c] !== 0;
-                const isHintOrUser = !isGiven && userEntries[r][c] !== 0;
+                const key = `${r},${c}`;
+                const isGiven = (givens[r]?.[c] ?? 0) !== 0;
+                const isHintOrUser = !isGiven && (userEntries[r]?.[c] ?? 0) !== 0;
                 const isAutoSolved =
                   !isGiven && !isHintOrUser && solution !== null && val !== 0;
                 const isSelected =
                   selectedCell !== null &&
                   selectedCell[0] === r &&
                   selectedCell[1] === c;
+                const isDraftCell =
+                  cageEditMode && draftCageCells.includes(key);
                 const isPeer =
+                  !cageEditMode &&
                   selectedCell !== null &&
                   !isSelected &&
                   (selectedCell[0] === r ||
                     selectedCell[1] === c ||
-                    (Math.floor(selectedCell[0] / 3) === Math.floor(r / 3) &&
-                      Math.floor(selectedCell[1] / 3) === Math.floor(c / 3)));
+                    (Math.floor(selectedCell[0] / boxRows) ===
+                      Math.floor(r / boxRows) &&
+                      Math.floor(selectedCell[1] / boxCols) ===
+                        Math.floor(c / boxCols)));
                 const isSameDigit =
-                  selectedValue !== 0 && val === selectedValue && !isSelected;
-                const isConflict = conflicts.has(`${r},${c}`);
+                  !cageEditMode &&
+                  selectedValue !== 0 &&
+                  val === selectedValue &&
+                  !isSelected;
+                const isConflict = conflicts.has(key);
                 const isActiveHintCell =
                   activeHint !== null &&
                   activeHint.row === r &&
                   activeHint.col === c;
 
                 const borderRight =
-                  c === 8
+                  c === size - 1
                     ? ''
-                    : c === 2 || c === 5
-                      ? 'border-r-2 border-r-slate-500/80'
+                    : c % boxCols === boxCols - 1
+                      ? 'border-r-2 border-r-slate-400/85'
                       : 'border-r border-r-slate-800';
                 const borderBottom =
-                  r === 8
+                  r === size - 1
                     ? ''
-                    : r === 2 || r === 5
-                      ? 'border-b-2 border-b-slate-500/80'
+                    : r % boxRows === boxRows - 1
+                      ? 'border-b-2 border-b-slate-400/85'
                       : 'border-b border-b-slate-800';
 
-                let bgClass = 'bg-slate-900/75 hover:bg-slate-800/85';
+                // Killer cage borders & tint
+                const cage = variant === 'killer' ? cellToCage.get(key) : undefined;
+                const cageHead =
+                  variant === 'killer' ? cageHeadMap.get(key) : undefined;
+                const cageTint =
+                  cage !== undefined
+                    ? CAGE_TINT_CLASSES[cageColorIdx.get(cage.id) ?? 0]
+                    : '';
+
+                let bgClass = cageTint || 'bg-slate-900/75';
                 if (isConflict) {
                   bgClass = 'bg-rose-500/25 hover:bg-rose-500/35';
+                } else if (isDraftCell) {
+                  bgClass = 'bg-amber-500/30 ring-2 ring-inset ring-amber-400';
                 } else if (isSelected) {
                   bgClass = 'bg-sky-500/30 ring-2 ring-inset ring-sky-400';
                 } else if (isActiveHintCell) {
                   bgClass =
                     'bg-amber-500/20 ring-2 ring-inset ring-amber-400/80';
                 } else if (isSameDigit) {
-                  bgClass = 'bg-emerald-500/18';
+                  bgClass = 'bg-emerald-500/20';
                 } else if (isPeer) {
-                  bgClass = 'bg-slate-800/65';
+                  bgClass = cageTint
+                    ? `${cageTint} brightness-125`
+                    : 'bg-slate-800/65';
+                } else {
+                  bgClass = `${bgClass} hover:bg-slate-800/85`;
                 }
 
                 let textClass = 'text-white font-extrabold';
@@ -550,10 +966,24 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
                   textClass = 'text-emerald-400 font-bold';
                 }
 
-                const cellCandidates =
-                  val === 0 && showCandidates
-                    ? getCellCandidates(workingGrid, r, c)
-                    : [];
+                const cageWallTop =
+                  cage && cellToCage.get(`${r - 1},${c}`)?.id !== cage.id;
+                const cageWallBot =
+                  cage && cellToCage.get(`${r + 1},${c}`)?.id !== cage.id;
+                const cageWallLeft =
+                  cage && cellToCage.get(`${r},${c - 1}`)?.id !== cage.id;
+                const cageWallRight =
+                  cage && cellToCage.get(`${r},${c + 1}`)?.id !== cage.id;
+
+                const canShowCands = showCandidates && size <= 9 && val === 0;
+                const cellCandidates = canShowCands
+                  ? getCellCandidates(workingGrid, r, c, {
+                      size,
+                      cages: activeCages,
+                    })
+                  : [];
+
+                const sym = digitToSymbol(val);
 
                 return (
                   <button
@@ -562,6 +992,9 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
                     data-row={r}
                     data-col={c}
                     data-val={val}
+                    data-sym={sym}
+                    data-cage-id={cage?.id ?? ''}
+                    data-cage-sum={cageHead ? cageHead.sum : ''}
                     data-kind={
                       isGiven
                         ? 'given'
@@ -571,24 +1004,57 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
                             ? 'solved'
                             : 'empty'
                     }
-                    aria-label={`Baris ${r + 1} Kolom ${c + 1}${val ? ` angka ${val}` : ' kosong'}`}
-                    onClick={() => setSelectedCell([r, c])}
+                    aria-label={`Baris ${r + 1} Kolom ${c + 1}${sym ? ` simbol ${sym}` : ' kosong'}${cageHead && cageHead.sum > 0 ? ` sangkar jumlah ${cageHead.sum}` : ''}`}
+                    onClick={() => {
+                      setSelectedCell([r, c]);
+                      if (cageEditMode && variant === 'killer') {
+                        setDraftCageCells((prev) =>
+                          prev.includes(key)
+                            ? prev.filter((k) => k !== key)
+                            : [...prev, key]
+                        );
+                      }
+                    }}
                     className={`relative flex items-center justify-center focus:outline-none transition-colors ${borderRight} ${borderBottom} ${bgClass}`}
                   >
+                    {/* Killer dashed cage inner frame */}
+                    {cage && (
+                      <span
+                        aria-hidden="true"
+                        className={`pointer-events-none absolute inset-[2px] border-sky-300/65 ${
+                          cageWallTop ? 'border-t border-dashed' : ''
+                        } ${cageWallBot ? 'border-b border-dashed' : ''} ${
+                          cageWallLeft ? 'border-l border-dashed' : ''
+                        } ${cageWallRight ? 'border-r border-dashed' : ''}`}
+                      />
+                    )}
+
+                    {/* Killer cage sum badge in top-left corner of cage head */}
+                    {cageHead && cageHead.sum > 0 && (
+                      <span
+                        aria-hidden="true"
+                        className="pointer-events-none absolute top-[2px] left-[3px] text-[8px] sm:text-[10px] leading-none font-bold text-amber-300 bg-slate-950/75 px-0.5 rounded-sm z-10 tabular-nums"
+                      >
+                        {cageHead.sum}
+                      </span>
+                    )}
+
                     {val !== 0 ? (
                       <span
-                        className={`text-lg sm:text-2xl leading-none tabular-nums ${textClass}`}
+                        className={`${CELL_TEXT_CLASSES[size]} leading-none tabular-nums ${textClass} ${
+                          variant === 'killer' ? 'translate-y-[2px]' : ''
+                        }`}
                       >
-                        {val}
+                        {sym}
                       </span>
-                    ) : showCandidates && cellCandidates.length > 0 ? (
+                    ) : canShowCands && cellCandidates.length > 0 ? (
                       <span className="grid grid-cols-3 grid-rows-3 w-full h-full p-0.5 text-[8px] sm:text-[9px] leading-none text-slate-400 font-medium">
-                        {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((d) => (
+                        {symbolsList.map((d) => (
                           <span
                             key={d}
                             className="flex items-center justify-center"
                           >
-                            {cellCandidates.includes(d) ? d : ''}
+                            {cellCandidates.includes(d) ? digitToSymbol(d) : ''}
                           </span>
                         ))}
                       </span>
@@ -616,13 +1082,15 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
               </span>
             </div>
             <span className="text-slate-500">
-              Ketik 1–9 / panah untuk edit
+              {size >= 12
+                ? `Ketik 1–9, A–${digitToSymbol(size)} / panah`
+                : `Ketik 1–${size} / panah untuk edit`}
             </span>
           </div>
         </div>
 
         {/* Primary Action Buttons */}
-        <div className="w-full max-w-[468px] grid grid-cols-2 gap-2">
+        <div className={`w-full ${boardMaxWidthClass} grid grid-cols-2 gap-2`}>
           <button
             type="button"
             data-testid="sudoku-solve-btn"
@@ -646,7 +1114,7 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
         </div>
 
         {/* Secondary Action Row */}
-        <div className="w-full max-w-[468px] grid grid-cols-3 gap-1.5">
+        <div className={`w-full ${boardMaxWidthClass} grid grid-cols-3 gap-1.5`}>
           <button
             type="button"
             data-testid="sudoku-hint-btn"
@@ -676,13 +1144,21 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
           </button>
         </div>
 
-        {/* On-Screen Digit Keypad (1-9 + Erase) */}
-        <div className="w-full max-w-[468px] grid grid-cols-5 sm:grid-cols-10 gap-1.5">
-          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => (
+        {/* Dynamic On-Screen Keypad (1..size + Erase) */}
+        <div
+          className={`w-full ${boardMaxWidthClass} grid ${
+            size >= 12
+              ? 'grid-cols-6 sm:grid-cols-9'
+              : size <= 6
+                ? 'grid-cols-4 sm:grid-cols-7'
+                : 'grid-cols-5 sm:grid-cols-10'
+          } gap-1.5`}
+        >
+          {symbolsList.map((digit) => (
             <button
               key={digit}
               type="button"
-              disabled={!selectedCell}
+              disabled={!selectedCell || cageEditMode}
               onClick={() => {
                 if (selectedCell) {
                   setCellDigit(selectedCell[0], selectedCell[1], digit);
@@ -690,13 +1166,13 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
               }}
               className="py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 active:scale-95 disabled:opacity-40 border border-white/10 text-sm font-bold text-white transition"
             >
-              {digit}
+              {digitToSymbol(digit)}
             </button>
           ))}
           <button
             type="button"
-            disabled={!selectedCell}
-            aria-label="Hapus angka pada sel terpilih"
+            disabled={!selectedCell || cageEditMode}
+            aria-label="Hapus simbol pada sel terpilih"
             title="Hapus Sel"
             onClick={() => {
               if (selectedCell) {
@@ -710,8 +1186,8 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
         </div>
       </section>
 
-      {/* RIGHT COLUMN: Screenshot Scanner Preview, Status & Hint, Sample Presets */}
-      <section className="lg:col-span-6 flex flex-col gap-4 w-full">
+      {/* RIGHT COLUMN: Status & Hint, Killer Cage Editor, Screenshot Scanner, Presets */}
+      <section className="lg:col-span-5 flex flex-col gap-4 w-full">
         {/* Status & Solution / Hint Card */}
         <div
           data-testid="sudoku-status"
@@ -723,23 +1199,25 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
               <span>Status & Solusi Sudoku</span>
             </h2>
 
-            <button
-              type="button"
-              aria-pressed={showCandidates}
-              onClick={() => setShowCandidates((v) => !v)}
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition ${
-                showCandidates
-                  ? 'bg-sky-500/20 border-sky-400/50 text-sky-200'
-                  : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-              }`}
-            >
-              {showCandidates ? (
-                <Eye className="w-3.5 h-3.5" aria-hidden="true" />
-              ) : (
-                <EyeOff className="w-3.5 h-3.5" aria-hidden="true" />
-              )}
-              <span>Tampilkan Kandidat</span>
-            </button>
+            {size <= 9 && (
+              <button
+                type="button"
+                aria-pressed={showCandidates}
+                onClick={() => setShowCandidates((v) => !v)}
+                className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition ${
+                  showCandidates
+                    ? 'bg-sky-500/20 border-sky-400/50 text-sky-200'
+                    : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                }`}
+              >
+                {showCandidates ? (
+                  <Eye className="w-3.5 h-3.5" aria-hidden="true" />
+                ) : (
+                  <EyeOff className="w-3.5 h-3.5" aria-hidden="true" />
+                )}
+                <span>Tampilkan Kandidat</span>
+              </button>
+            )}
           </div>
 
           {solveMeta?.invalidReason ? (
@@ -758,7 +1236,8 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
               />
               <div className="flex flex-col gap-0.5">
                 <span className="font-bold text-emerald-300">
-                  Sudoku Terselesaikan 100% (81/81 Sel Valid)
+                  {variant === 'killer' ? 'Killer Sudoku' : 'Sudoku'} {size}×
+                  {size} Terselesaikan ({totalCells}/{totalCells} Sel Valid)
                 </span>
                 {solveMeta && (
                   <span className="text-emerald-200/80">
@@ -772,12 +1251,9 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
             </div>
           ) : (
             <p className="text-xs text-slate-300 leading-relaxed">
-              Upload screenshot Sudoku dari HP atau ketik angka langsung pada
-              papan, lalu klik{' '}
-              <strong className="text-emerald-300">Solve Semua</strong> untuk
-              menampilkan jawaban lengkap atau{' '}
-              <strong className="text-amber-300">Hint 1 Langkah</strong> untuk
-              petunjuk bertahap.
+              Unggah screenshot Sudoku ukuran apa saja (4×4, 6×6, 8×8, 9×9,
+              12×12, 16×16, atau Killer Sudoku) untuk deteksi otomatis, lalu
+              klik <strong className="text-emerald-300">Solve Semua</strong>.
             </p>
           )}
 
@@ -793,7 +1269,7 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
                 </span>
                 <span className="font-mono text-[11px] text-amber-200">
                   B{activeHint.row + 1} · K{activeHint.col + 1} →{' '}
-                  <strong>{activeHint.value}</strong>
+                  <strong>{activeHint.symbol}</strong>
                 </span>
               </div>
               <p className="text-xs text-slate-200 leading-relaxed">
@@ -803,22 +1279,160 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
           )}
         </div>
 
-        {/* Screenshot Scanner Dropzone + Preview */}
+        {/* Killer Sudoku Cage Editor (shown in Killer mode) */}
+        {variant === 'killer' && (
+          <div
+            data-testid="killer-cage-editor"
+            className="bg-slate-900/90 border border-amber-400/25 rounded-2xl p-4 flex flex-col gap-3"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-sm font-bold text-amber-300 flex items-center gap-2">
+                <Layers className="w-4 h-4" aria-hidden="true" />
+                <span>Editor Sangkar Killer</span>
+              </h2>
+              <button
+                type="button"
+                aria-pressed={cageEditMode}
+                onClick={() => {
+                  setCageEditMode((v) => !v);
+                  setDraftCageCells([]);
+                }}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
+                  cageEditMode
+                    ? 'bg-amber-400 text-slate-950 border-amber-300'
+                    : 'bg-white/5 text-amber-200 border-amber-400/35 hover:bg-amber-400/15'
+                }`}
+              >
+                {cageEditMode ? 'Selesai Pilih Sel' : '+ Buat Sangkar'}
+              </button>
+            </div>
+
+            {cageEditMode ? (
+              <div className="flex flex-col gap-2.5 text-xs">
+                <p className="text-slate-300">
+                  Klik beberapa sel di papan untuk memilih anggota sangkar (
+                  <strong className="text-amber-300">
+                    {draftCageCells.length} sel terpilih
+                  </strong>
+                  ), lalu isi target jumlahnya:
+                </p>
+                <div className="flex items-center gap-2">
+                  <label className="sr-only" htmlFor="draft-cage-sum">
+                    Jumlah sangkar baru
+                  </label>
+                  <input
+                    id="draft-cage-sum"
+                    type="number"
+                    min={1}
+                    max={45}
+                    value={draftCageSum}
+                    onChange={(e) => setDraftCageSum(e.target.value)}
+                    placeholder="Jumlah"
+                    className="w-24 px-3 py-1.5 rounded-lg bg-slate-950 border border-white/15 text-white text-xs font-bold focus:outline-none focus:border-amber-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveDraftCage}
+                    className="px-3 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold flex items-center gap-1 transition"
+                  >
+                    <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+                    Simpan Sangkar
+                  </button>
+                </div>
+              </div>
+            ) : selectedCage ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-950/60 border border-white/10 rounded-xl p-2.5 text-xs">
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-semibold text-white">
+                    Sangkar Terpilih ({selectedCage.cells.length} sel)
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    Ubah jumlah sangkar jika hasil scan kurang tepat
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <label
+                    htmlFor="selected-cage-sum"
+                    className="text-[11px] text-slate-400"
+                  >
+                    Jumlah:
+                  </label>
+                  <input
+                    id="selected-cage-sum"
+                    type="number"
+                    min={0}
+                    max={45}
+                    value={selectedCage.sum || ''}
+                    onChange={(e) =>
+                      handleUpdateSelectedCageSum(
+                        selectedCage.id,
+                        e.target.value
+                      )
+                    }
+                    className="w-16 px-2 py-1 rounded-lg bg-slate-900 border border-amber-400/40 text-amber-200 text-xs font-bold text-center focus:outline-none focus:border-amber-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveSelectedCage(selectedCage.id)}
+                    className="px-2 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-400/30 text-rose-200 text-[11px] font-semibold transition"
+                  >
+                    Hapus
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Klik sel di papan untuk mengedit jumlah sangkarnya, atau klik{' '}
+                <strong className="text-amber-300">+ Buat Sangkar</strong> untuk
+                menambahkan sangkar Killer secara manual.
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Screenshot Scanner Dropzone + Auto/Manual Size Selector + Preview */}
         <div className="bg-slate-900/90 border border-white/10 rounded-2xl p-4 flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-bold text-white flex items-center gap-2">
               <ScanLine className="w-4 h-4 text-sky-400" aria-hidden="true" />
               <span>Scan Screenshot Sudoku</span>
             </h2>
-            {uploadedImageDataUrl && (
-              <button
-                type="button"
-                onClick={handleRescan}
-                className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-semibold text-sky-300 transition"
+
+            <div className="flex items-center gap-1.5">
+              <label htmlFor="sudoku-scan-mode" className="sr-only">
+                Mode deteksi ukuran scan
+              </label>
+              <select
+                id="sudoku-scan-mode"
+                data-testid="sudoku-scan-mode"
+                value={scanMode}
+                onChange={(e) => {
+                  const next = e.target.value as ScanModeChoice;
+                  setScanMode(next);
+                  if (uploadedImageDataUrl) handleRescan(next);
+                }}
+                className="px-2 py-1 rounded-lg bg-slate-950 border border-white/15 text-[11px] font-semibold text-slate-200 focus:outline-none focus:border-sky-400"
               >
-                Scan Ulang
-              </button>
-            )}
+                <option value="auto">Auto Deteksi</option>
+                <option value="classic-4">4×4 Klasik</option>
+                <option value="classic-6">6×6 Klasik</option>
+                <option value="classic-8">8×8 Klasik</option>
+                <option value="classic-9">9×9 Klasik</option>
+                <option value="killer-9">Killer 9×9</option>
+                <option value="classic-12">12×12 (1–C)</option>
+                <option value="classic-16">16×16 (1–G)</option>
+              </select>
+
+              {uploadedImageDataUrl && (
+                <button
+                  type="button"
+                  onClick={() => handleRescan()}
+                  className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-semibold text-sky-300 transition"
+                >
+                  Scan Ulang
+                </button>
+              )}
+            </div>
           </div>
 
           <button
@@ -836,7 +1450,7 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
               const file = e.dataTransfer.files?.[0];
               if (file) handleImageFile(file);
             }}
-            className={`w-full rounded-xl border-2 border-dashed p-4 text-center transition flex flex-col items-center justify-center gap-1.5 ${
+            className={`w-full rounded-xl border-2 border-dashed p-3.5 text-center transition flex flex-col items-center justify-center gap-1.5 ${
               dragOver
                 ? 'border-sky-400 bg-sky-500/15'
                 : 'border-white/15 bg-slate-950/60 hover:border-sky-400/50 hover:bg-slate-800/50'
@@ -847,14 +1461,14 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
               Klik, seret gambar ke sini, atau tekan Ctrl+V
             </span>
             <span className="text-[11px] text-slate-400">
-              Mendukung screenshot Sudoku HP (tema terang & gelap) · otomatis
-              tersimpan saat refresh
+              Deteksi otomatis 4×4, 6×6, 8×8, 9×9, 12×12, 16×16 (1–G) &amp;
+              Killer Sudoku
             </span>
           </button>
 
           {uploadedImageDataUrl && (
             <div className="flex items-start gap-3 bg-slate-950/70 border border-white/10 rounded-xl p-3">
-              <div className="relative w-24 sm:w-28 shrink-0 rounded-lg overflow-hidden border border-white/15 bg-slate-900">
+              <div className="relative w-24 shrink-0 rounded-lg overflow-hidden border border-white/15 bg-slate-900">
                 <img
                   src={uploadedImageDataUrl}
                   alt="Pratinjau screenshot Sudoku"
@@ -881,39 +1495,44 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
 
               <div className="flex flex-col gap-1 text-xs min-w-0">
                 <span className="font-bold text-white">
-                  Hasil Pemindaian Otomatis
+                  {variant === 'killer'
+                    ? `Killer Sudoku ${size}×${size}`
+                    : `Sudoku ${size}×${size}`}
                 </span>
                 <span className="text-emerald-300 font-semibold">
-                  {detectedCount} angka terdeteksi di papan 9×9
+                  {detectedCount} simbol terdeteksi
+                  {variant === 'killer' ? ` · ${cages.length} sangkar` : ''}
                 </span>
                 <span className="text-[11px] text-slate-400 leading-relaxed">
-                  Kotak hijau menandai area grid yang terdeteksi. Jika ada 1–2
-                  angka kurang tepat, klik sel pada papan untuk mengoreksi
-                  langsung.
+                  Kotak hijau menandai area grid terdeteksi. Klik sel pada papan
+                  jika perlu koreksi manual.
                 </span>
               </div>
             </div>
           )}
         </div>
 
-        {/* Sample Presets */}
+        {/* Sample Presets (4x4, 6x6, 9x9, Killer 9x9, 16x16) */}
         <div className="bg-slate-900/90 border border-white/10 rounded-2xl p-4 flex flex-col gap-2.5">
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">
             Contoh Soal Cepat
           </h2>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {SUDOKU_PRESETS.map((preset) => (
               <button
                 key={preset.key}
                 type="button"
-                onClick={() => handleLoadPreset(preset.board, preset.label)}
-                className="py-2.5 px-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-left flex flex-col gap-0.5 transition"
+                data-testid={`preset-${preset.key}`}
+                onClick={() => handleLoadPreset(preset)}
+                className="py-2 px-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-left flex flex-col gap-0.5 transition"
               >
                 <span className="text-xs font-bold text-white">
-                  {preset.difficulty}
+                  {preset.label}
                 </span>
                 <span className="text-[11px] text-slate-400 truncate">
-                  {countFilledCells(preset.board)} angka awal
+                  {preset.variant === 'killer'
+                    ? `${preset.cages?.length ?? 0} sangkar`
+                    : `${countFilledCells(preset.board)} simbol awal`}
                 </span>
               </button>
             ))}
