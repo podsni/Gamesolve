@@ -49,8 +49,23 @@ import { StageCanvas } from './components/StageCanvas';
 import { SolveTab } from './components/SolveTab';
 import { ScanTab } from './components/ScanTab';
 import { EditTab, SelectedShapeInfo } from './components/EditTab';
+import { SudokuView } from './components/SudokuView';
+
+type AppMode = 'okay' | 'sudoku';
+const APP_MODE_STORAGE_KEY = 'okay_app_mode_v1';
+
+function readInitialAppMode(): AppMode {
+  try {
+    const saved = localStorage.getItem(APP_MODE_STORAGE_KEY);
+    if (saved === 'sudoku' || saved === 'okay') return saved;
+  } catch {
+    // Ignore storage errors
+  }
+  return 'okay';
+}
 
 export default function App() {
+  const [appMode, setAppMode] = useState<AppMode>(readInitialAppMode);
   const [activeTab, setActiveTab] = useState<TabKey>('solve');
   const [toolMode, setToolMode] = useState<ToolMode>('play');
   const [activePresetKey, setActivePresetKey] = useState<string | null>(
@@ -495,8 +510,18 @@ export default function App() {
     [engine, runImageExtraction, buildPersistedSnapshot, showToast]
   );
 
-  // Global clipboard paste support for screenshots
+  // Persist top-level app mode across page refreshes
   useEffect(() => {
+    try {
+      localStorage.setItem(APP_MODE_STORAGE_KEY, appMode);
+    } catch {
+      // Ignore storage errors
+    }
+  }, [appMode]);
+
+  // Global clipboard paste support for Okay? screenshots (only active in Okay? mode)
+  useEffect(() => {
+    if (appMode !== 'okay') return;
     const handlePaste = (e: ClipboardEvent) => {
       const items = e.clipboardData?.items;
       if (!items) return;
@@ -509,7 +534,7 @@ export default function App() {
     };
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
-  }, [handleImageFile]);
+  }, [appMode, handleImageFile]);
 
   const handleToolModeChange = useCallback(
     (mode: ToolMode) => {
@@ -769,91 +794,155 @@ export default function App() {
         <header className="flex flex-wrap items-center justify-between gap-4 pb-2 border-b border-white/10">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-400/35 flex items-center justify-center shrink-0">
-              <svg
-                className="w-5 h-5 text-emerald-400"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <circle cx="6" cy="18" r="2.5" fill="currentColor" />
-                <path d="M8 16L17 7L12 4" strokeDasharray="2.5 2.5" />
-                <polygon
-                  points="15 4 21 4 21 10"
-                  fill="currentColor"
-                  stroke="none"
+              {appMode === 'sudoku' ? (
+                <Grid3X3
+                  className="w-5 h-5 text-emerald-400"
+                  aria-hidden="true"
                 />
-              </svg>
+              ) : (
+                <svg
+                  className="w-5 h-5 text-emerald-400"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="6" cy="18" r="2.5" fill="currentColor" />
+                  <path d="M8 16L17 7L12 4" strokeDasharray="2.5 2.5" />
+                  <polygon
+                    points="15 4 21 4 21 10"
+                    fill="currentColor"
+                    stroke="none"
+                  />
+                </svg>
+              )}
             </div>
             <h1 className="text-lg sm:text-xl font-extrabold tracking-tight text-white whitespace-nowrap">
-              Okay?{' '}
-              <span className="text-emerald-400 font-semibold">
-                Simulator & Auto-Solver
-              </span>
+              {appMode === 'okay' ? (
+                <>
+                  Okay?{' '}
+                  <span className="text-emerald-400 font-semibold">
+                    Simulator & Auto-Solver
+                  </span>
+                </>
+              ) : (
+                <>
+                  Sudoku{' '}
+                  <span className="text-emerald-400 font-semibold">
+                    Scanner & Auto-Solver
+                  </span>
+                </>
+              )}
             </h1>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              aria-pressed={showGrid}
-              onClick={() => {
-                const next = !showGrid;
-                engine.showGrid = next;
-                setShowGrid(next);
-              }}
-              className={`px-3 py-2 rounded-xl text-xs font-semibold border flex items-center gap-1.5 whitespace-nowrap transition ${
-                showGrid
-                  ? 'bg-sky-500/20 border-sky-400/60 text-sky-200'
-                  : 'bg-white/5 border-white/10 text-slate-200 hover:bg-white/10'
-              }`}
-              title="Tampilkan Grid Bantu"
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {/* Top-level Game Mode Switcher */}
+            <nav
+              aria-label="Pilih mode solver"
+              className="bg-slate-900/90 border border-white/10 p-1 rounded-xl flex items-center gap-1"
             >
-              <Grid3X3 className="w-3.5 h-3.5" aria-hidden="true" />
-              <span className="hidden sm:inline">Grid</span>
-            </button>
+              <button
+                type="button"
+                data-testid="mode-okay"
+                aria-pressed={appMode === 'okay'}
+                onClick={() => setAppMode('okay')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition ${
+                  appMode === 'okay'
+                    ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                    : 'text-slate-300 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                Okay? Solver
+              </button>
+              <button
+                type="button"
+                data-testid="mode-sudoku"
+                aria-pressed={appMode === 'sudoku'}
+                onClick={() => setAppMode('sudoku')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition ${
+                  appMode === 'sudoku'
+                    ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                    : 'text-slate-300 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                Sudoku Solver
+              </button>
+            </nav>
 
-            <button
-              type="button"
-              aria-pressed={muted}
-              aria-label={muted ? 'Aktifkan Suara' : 'Bisukan Suara'}
-              onClick={() => {
-                const next = !muted;
-                audioEngine.muted = next;
-                setMuted(next);
-              }}
-              className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-slate-200 flex items-center gap-1.5 whitespace-nowrap transition"
-              title="Suara Kalimba"
-            >
-              {muted ? (
-                <VolumeX className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
-              ) : (
-                <Volume2 className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
-              )}
-              <span className="hidden sm:inline">Suara</span>
-            </button>
+            {appMode === 'okay' && (
+              <>
+                <button
+                  type="button"
+                  aria-pressed={showGrid}
+                  onClick={() => {
+                    const next = !showGrid;
+                    engine.showGrid = next;
+                    setShowGrid(next);
+                  }}
+                  className={`px-3 py-2 rounded-xl text-xs font-semibold border flex items-center gap-1.5 whitespace-nowrap transition ${
+                    showGrid
+                      ? 'bg-sky-500/20 border-sky-400/60 text-sky-200'
+                      : 'bg-white/5 border-white/10 text-slate-200 hover:bg-white/10'
+                  }`}
+                  title="Tampilkan Grid Bantu"
+                >
+                  <Grid3X3 className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span className="hidden sm:inline">Grid</span>
+                </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                engine.stopSimulation(true);
-                engine.resetCamera();
-                showToast('Papan & tampilan zoom direset.');
-              }}
-              className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-slate-200 flex items-center gap-1.5 whitespace-nowrap transition"
-              title="Reset Papan & Zoom"
-            >
-              <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>Reset</span>
-            </button>
+                <button
+                  type="button"
+                  aria-pressed={muted}
+                  aria-label={muted ? 'Aktifkan Suara' : 'Bisukan Suara'}
+                  onClick={() => {
+                    const next = !muted;
+                    audioEngine.muted = next;
+                    setMuted(next);
+                  }}
+                  className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-slate-200 flex items-center gap-1.5 whitespace-nowrap transition"
+                  title="Suara Kalimba"
+                >
+                  {muted ? (
+                    <VolumeX
+                      className="w-3.5 h-3.5 text-slate-400"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Volume2
+                      className="w-3.5 h-3.5 text-emerald-400"
+                      aria-hidden="true"
+                    />
+                  )}
+                  <span className="hidden sm:inline">Suara</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    engine.stopSimulation(true);
+                    engine.resetCamera();
+                    showToast('Papan & tampilan zoom direset.');
+                  }}
+                  className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-slate-200 flex items-center gap-1.5 whitespace-nowrap transition"
+                  title="Reset Papan & Zoom"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Reset</span>
+                </button>
+              </>
+            )}
           </div>
         </header>
 
-        {/* Main 2-Column Workspace */}
-        <main className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* Main Workspace */}
+        {appMode === 'sudoku' ? (
+          <SudokuView onToast={showToast} />
+        ) : (
+          <main className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           {/* LEFT COLUMN: Interactive Zoomable Stage + Actions */}
           <section className="lg:col-span-5 flex flex-col items-center gap-3 w-full">
             <StageCanvas
@@ -1256,14 +1345,15 @@ export default function App() {
             )}
           </section>
         </main>
+        )}
       </div>
 
-      {/* Non-blocking Toast (top-right on desktop so it never overlaps CTA buttons) */}
+      {/* Non-blocking Toast (bottom-right on desktop so it never overlaps header switcher or left CTA buttons) */}
       {toastMsg && (
         <div
           role="status"
           aria-live="polite"
-          className="pointer-events-none fixed bottom-4 left-1/2 -translate-x-1/2 lg:bottom-auto lg:top-4 lg:left-auto lg:right-6 lg:translate-x-0 z-50 bg-slate-900 border border-emerald-400/35 text-white px-4 py-2.5 rounded-xl shadow-2xl text-xs font-semibold max-w-[92vw] lg:max-w-sm text-center lg:text-left"
+          className="pointer-events-none fixed bottom-4 left-1/2 -translate-x-1/2 lg:bottom-5 lg:left-auto lg:right-6 lg:translate-x-0 z-50 bg-slate-900 border border-emerald-400/35 text-white px-4 py-2.5 rounded-xl shadow-2xl text-xs font-semibold max-w-[92vw] lg:max-w-sm text-center lg:text-left"
         >
           {toastMsg}
         </div>
