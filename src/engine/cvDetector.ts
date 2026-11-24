@@ -52,7 +52,6 @@ function ensureMinBarThickness(verts: Point[], minThickness = 1.4): Point[] {
   if (shortLen >= minThickness) return verts;
 
   const cent = polygonCentroid(verts);
-  // Unit vector along short axis
   const sx = len0 < len1 ? e0x / len0 : e1x / len1;
   const sy = len0 < len1 ? e0y / len0 : e1y / len1;
   const halfDelta = (minThickness - shortLen) * 0.5;
@@ -68,9 +67,47 @@ function ensureMinBarThickness(verts: Point[], minThickness = 1.4): Point[] {
 }
 
 /**
+ * Removes near-collinear intermediate vertices (turn angle < minTurnDeg)
+ * so beveled trapezoids, pentagons, and hexagons have razor-sharp edges.
+ */
+function pruneNearCollinearVertices(poly: Point[], minTurnDeg = 8): Point[] {
+  if (poly.length <= 3) return poly;
+  const cosThresh = Math.cos((minTurnDeg * Math.PI) / 180);
+  const out = poly.slice();
+  let changed = true;
+  while (changed && out.length > 3) {
+    changed = false;
+    for (let i = 0; i < out.length; i++) {
+      const prev = out[(i - 1 + out.length) % out.length];
+      const curr = out[i];
+      const next = out[(i + 1) % out.length];
+      const v1x = curr.x - prev.x;
+      const v1y = curr.y - prev.y;
+      const v2x = next.x - curr.x;
+      const v2y = next.y - curr.y;
+      const l1 = Math.hypot(v1x, v1y);
+      const l2 = Math.hypot(v2x, v2y);
+      if (l1 < 1e-4 || l2 < 1e-4) {
+        out.splice(i, 1);
+        changed = true;
+        break;
+      }
+      const dot = (v1x * v2x + v1y * v2y) / (l1 * l2);
+      if (dot >= cosThresh) {
+        out.splice(i, 1);
+        changed = true;
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Pure pixel-buffer CV extractor (also unit-testable in Node without DOM Canvas).
- * Preserves ultra-thin target lines (even 1–2px thick) using outer pixel-corner hulls
- * and thin-line aspect-aware acceptance rules while rejecting subtle drop shadows.
+ * - Automatically strips full-width top/bottom app UI toolbars & hollow button borders.
+ * - Preserves 45° beveled trapezoids/pentagons/hexagons without crushing them into 90° boxes.
+ * - Preserves ultra-thin white target strings (auto-classified as passThrough).
  */
 export function extractShapesFromImageData({
   imgData,
@@ -81,13 +118,13 @@ export function extractShapesFromImageData({
   swapTargetWall,
   allocateId,
 }: CVRawBufferParams): CVExtractResult {
-  const topCut = ignoreStatusBars ? Math.floor(ph * 0.055) : 0;
-  const botCut = ignoreStatusBars ? Math.floor(ph * 0.945) : ph;
-
-  // 1. Dominant background color (quantized 3-bit histogram)
+  // 1. Dominant background color sampled from central gameplay region (16%..82%)
+  //    so full-width white/black UI toolbars at top/bottom never bias background detection.
+  const bgSampleTop = Math.floor(ph * 0.16);
+  const bgSampleBot = Math.floor(ph * 0.82);
   const buckets = new Map<string, { count: number; r: number; g: number; b: number }>();
   const sampleStep = pw > 350 ? 3 : 2;
-  for (let y = topCut; y < botCut; y += sampleStep) {
+  for (let y = bgSampleTop; y < bgSampleBot; y += sampleStep) {
     for (let x = 0; x < pw; x += sampleStep) {
       const idx = (y * pw + x) * 4;
       const r = imgData[idx];
@@ -112,11 +149,74 @@ export function extractShapesFromImageData({
   const bgLum = 0.299 * bgR + 0.587 * bgG + 0.114 * bgB;
   const bgColor = `rgb(${bgR}, ${bgG}, ${bgB})`;
 
-  // 2. Foreground classification (target = 1, wall = 2, bg = 0)
-  const labels = new Uint8Array(pw * ph);
   const sensSq = detectSensitivity * detectSensitivity * 3 * 0.65;
   const lightBg = bgLum > 195;
 
+  // 2. Active playfield vertical bounds (auto-crop full-width top/bottom app toolbars & banners)
+  let topCut = ignoreStatusBars ? Math.floor(ph * 0.055) : 0;
+  let botCut = ignoreStatusBars ? Math.floor(ph * 0.945) : ph;
+
+  if (ignoreStatusBars) {
+    const rowNonBgRatio = (y: number): number => {
+      let nonBg = 0;
+      let total = 0;
+      for (let x = 0; x < pw; x += 2) {
+        const idx = (y * pw + x) * 4;
+        const dr = imgData[idx] - bgR;
+        const dg = imgData[idx + 1] - bgG;
+        const db = imgData[idx + 2] - bgB;
+        if (dr * dr + dg * dg + db * db > sensSq * 0.6) nonBg++;
+        total++;
+      }
+      return total > 0 ? nonBg / total : 0;
+    };
+
+    // Scan upward from bottom (up to 22% height) to strip full-width white/dark footer toolbars
+    const minBotScan = Math.floor(ph * 0.78);
+    let bottomBarTop = ph;
+    let sawBottomBar = false;
+    let gapAllowance = 0;
+    for (let y = ph - 1; y >= minBotScan; y--) {
+      if (rowNonBgRatio(y) >= 0.8) {
+        sawBottomBar = true;
+        bottomBarTop = y;
+        gapAllowance = 0;
+      } else if (sawBottomBar) {
+        gapAllowance++;
+        if (gapAllowance > 3) break;
+      } else if (y < Math.floor(ph * 0.93)) {
+        // No full-width bar near the bottom edge
+        break;
+      }
+    }
+    if (sawBottomBar) {
+      botCut = Math.min(botCut, Math.max(minBotScan, bottomBarTop - 3));
+    }
+
+    // Scan downward from top (up to 15% height) to strip full-width top header/ad banners
+    const maxTopScan = Math.floor(ph * 0.15);
+    let topBarBot = 0;
+    let sawTopBar = false;
+    gapAllowance = 0;
+    for (let y = 0; y < maxTopScan; y++) {
+      if (rowNonBgRatio(y) >= 0.8) {
+        sawTopBar = true;
+        topBarBot = y;
+        gapAllowance = 0;
+      } else if (sawTopBar) {
+        gapAllowance++;
+        if (gapAllowance > 3) break;
+      } else if (y > Math.floor(ph * 0.06)) {
+        break;
+      }
+    }
+    if (sawTopBar) {
+      topCut = Math.max(topCut, Math.min(maxTopScan, topBarBot + 3));
+    }
+  }
+
+  // 3. Foreground classification (target = 1, wall = 2, bg = 0)
+  const labels = new Uint8Array(pw * ph);
   for (let y = topCut; y < botCut; y++) {
     for (let x = 0; x < pw; x++) {
       const pIdx = y * pw + x;
@@ -146,7 +246,7 @@ export function extractShapesFromImageData({
     }
   }
 
-  // 3. Connected Components + Outer-Corner Hull + Smart Rectangle / Triangle / Line Fitting
+  // 4. Connected Components + Solidity Filter + Exact Polygon / Bevel / OBB / Triangle Fitting
   const visited = new Uint8Array(pw * ph);
   const rawShapes: { type: ShapeType; poly: Point[] }[] = [];
   const minAreaPx = Math.max(30, Math.floor(pw * ph * 0.0003));
@@ -210,7 +310,7 @@ export function extractShapesFromImageData({
           }
         }
         if (isBoundary) {
-          // Push pixel outer corners so even 1px-thin lines yield a crisp non-degenerate 4-corner OBB
+          // Outer pixel corners keep even 1px-thin lines non-degenerate
           boundary.push(
             { x: cx, y: cy },
             { x: cx + 1, y: cy },
@@ -231,26 +331,44 @@ export function extractShapesFromImageData({
 
       if ((!isThinLine && pixelCount < minAreaPx) || pixelCount > maxAreaPx) continue;
       if (bw > pw * 0.92 && bh > ph * 0.85) continue;
+      // Reject edge-touching full-width UI strips if any remain
+      if (
+        ignoreStatusBars &&
+        bw > pw * 0.9 &&
+        (minY <= topCut + 2 || maxY >= botCut - 2)
+      ) {
+        continue;
+      }
 
       const hull = convexHull(boundary);
       if (hull.length < 3) continue;
 
       const hullArea = polygonArea(hull);
+      if (hullArea < 1) continue;
+
+      const solidity = pixelCount / hullArea;
+      // Reject hollow UI outlines (e.g. "watch ad for hint" button frame, outlined icons)
+      if (!isThinLine && solidity < 0.45) continue;
+
       const obb = computeMinAreaOBB(hull);
-      const rectangularity = obb.area > 1 ? pixelCount / obb.area : 0;
+      // Compare hullArea vs OBB area (rotation-invariant even on small tilted blocks,
+      // while cleanly distinguishing true 90° rectangles from 45° beveled trapezoids/pentagons!)
+      const hullRectRatio = obb.area > 1 ? hullArea / obb.area : 0;
 
       const triPoly = simplifyConvexPolygon(hull, 3, 1.0);
-      const triRatio = hullArea > 1 ? polygonArea(triPoly) / hullArea : 0;
+      const triRatio = polygonArea(triPoly) / hullArea;
 
       let finalPoly: Point[];
       if (isThinLine && obb.corners) {
         finalPoly = obb.corners;
-      } else if (rectangularity >= 0.78 && obb.corners) {
+      } else if (hullRectRatio >= 0.945 && solidity >= 0.82 && obb.corners) {
         finalPoly = obb.corners;
-      } else if (triRatio >= 0.88 && triPoly.length === 3) {
+      } else if (triRatio >= 0.93 && triPoly.length === 3) {
         finalPoly = triPoly;
       } else {
-        finalPoly = simplifyConvexPolygon(hull, 6, 0.02);
+        // Exact beveled / trapezoidal / polygonal contour preservation
+        const simplified = simplifyConvexPolygon(hull, 8, 0.0045);
+        finalPoly = pruneNearCollinearVertices(simplified, 8);
       }
 
       rawShapes.push({
@@ -260,7 +378,7 @@ export function extractShapesFromImageData({
     }
   }
 
-  // 4. Map to logical coordinates preserving aspect ratio
+  // 5. Map to logical coordinates preserving aspect ratio
   const imgAspect = pw / ph;
   const stageAspect = LOGICAL_W / LOGICAL_H;
   let drawW: number;
@@ -344,7 +462,7 @@ export function extractShapesFromImage({
     };
   }
 
-  // Higher processing resolution (960px maxDim) preserves ultra-thin white lines and narrow obstacle gaps
+  // Higher processing resolution (960px maxDim) preserves thin lines, narrow gaps & crisp 45° bevels
   const maxDim = 960;
   const scale = Math.min(maxDim / img.width, maxDim / img.height, 1);
   const pw = Math.max(40, Math.round(img.width * scale));

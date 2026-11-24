@@ -74,6 +74,7 @@ export class OkayEngineController {
   public cancelSolveFlag = false;
 
   public uploadedImage: HTMLImageElement | null = null;
+  public uploadedImageDataUrl: string | null = null;
   public uploadedRect: ImageRect = { x: 0, y: 0, w: LOGICAL_W, h: LOGICAL_H };
   public showImageOverlay = true;
   public imageOverlayAlpha = 0.35;
@@ -92,6 +93,14 @@ export class OkayEngineController {
   public allocateId = (): number => {
     return this.nextShapeId++;
   };
+
+  public syncNextShapeId(): void {
+    let maxId = 0;
+    for (const s of this.shapes) {
+      if (s.id > maxId) maxId = s.id;
+    }
+    this.nextShapeId = Math.max(this.nextShapeId, maxId + 1);
+  }
 
   public getRenderState(): RenderState {
     return {

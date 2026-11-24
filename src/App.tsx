@@ -40,6 +40,11 @@ import { analyzeAndCenterSolution, solveLevelAsync } from './engine/solver';
 import { getPresetByKey, PRESETS } from './engine/presets';
 import { extractShapesFromImage } from './engine/cvDetector';
 import { audioEngine } from './engine/audio';
+import {
+  loadWorkspaceState,
+  PersistedWorkspaceState,
+  saveWorkspaceState,
+} from './engine/persistence';
 import { StageCanvas } from './components/StageCanvas';
 import { SolveTab } from './components/SolveTab';
 import { ScanTab } from './components/ScanTab';
@@ -97,9 +102,11 @@ export default function App() {
   const [selectedShapeId, setSelectedShapeId] = useState<number | null>(null);
   const [shapeRevision, setShapeRevision] = useState(0);
 
-  // Toast message
+  // Toast message & persistence refs
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hydratedRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const showToast = useCallback((msg: string) => {
@@ -199,12 +206,54 @@ export default function App() {
     setFineBlocked(false);
   }, [engine]);
 
+  const buildPersistedSnapshot = useCallback(
+    (overrides?: Partial<PersistedWorkspaceState>): PersistedWorkspaceState => ({
+      version: 1,
+      savedAt: Date.now(),
+      activePresetKey,
+      activeTab,
+      bgColor: engine.bgColor,
+      ballRadius: engine.ballRadius,
+      shapes: engine.shapes,
+      uploadedImageDataUrl: engine.uploadedImageDataUrl,
+      uploadedRect: engine.uploadedRect,
+      showImageOverlay: engine.showImageOverlay,
+      imageOverlayAlpha: engine.imageOverlayAlpha,
+      detectSensitivity: engine.detectSensitivity,
+      ignoreStatusBars: engine.ignoreStatusBars,
+      swapTargetWall: engine.swapTargetWall,
+      detectedTargets,
+      detectedThinTargets,
+      detectedWalls,
+      solutions: engine.solutions,
+      activeSolutionIdx: engine.activeSolutionIdx,
+      showGrid: engine.showGrid,
+      snapToGrid: engine.snapToGrid,
+      showGuide: engine.showGuide,
+      showSafeZone: engine.showSafeZone,
+      showAltPaths: engine.showAltPaths,
+      ...overrides,
+    }),
+    [
+      activePresetKey,
+      activeTab,
+      detectedTargets,
+      detectedThinTargets,
+      detectedWalls,
+      engine,
+    ]
+  );
+
   const loadPreset = useCallback(
     (key: string) => {
       const preset = getPresetByKey(key);
       if (!preset) return;
       engine.uploadedImage = null;
+      engine.uploadedImageDataUrl = null;
       setHasUploadedImage(false);
+      setDetectedTargets(0);
+      setDetectedThinTargets(0);
+      setDetectedWalls(0);
       engine.bgColor = preset.bgColor;
       engine.ballRadius = preset.ballRadius;
       setBallRadius(preset.ballRadius);
@@ -221,14 +270,144 @@ export default function App() {
     [engine, invalidateSolution]
   );
 
-  // Initialize default preset on mount & clean up timers on unmount
+  // Hydrate persisted workspace (uploaded screenshot, shapes, settings & solutions) on mount,
+  // falling back to default preset only on first visit.
   useEffect(() => {
-    loadPreset('triangles4x5');
+    let cancelled = false;
+
+    const hydrate = async () => {
+      const saved = await loadWorkspaceState();
+      if (cancelled) return;
+
+      if (saved && (saved.uploadedImageDataUrl || saved.shapes.length > 0)) {
+        engine.bgColor = saved.bgColor;
+        engine.ballRadius = saved.ballRadius;
+        setBallRadius(saved.ballRadius);
+
+        engine.shapes = saved.shapes.map((s) => ({
+          ...s,
+          vertices: s.vertices.map((v) => ({ x: v.x, y: v.y })),
+          alive: true,
+          flash: 0,
+        }));
+        engine.syncNextShapeId();
+
+        engine.uploadedRect = saved.uploadedRect || {
+          x: 0,
+          y: 0,
+          w: LOGICAL_W,
+          h: LOGICAL_H,
+        };
+        engine.showImageOverlay = saved.showImageOverlay ?? true;
+        engine.imageOverlayAlpha = saved.imageOverlayAlpha ?? 0.35;
+        engine.detectSensitivity = saved.detectSensitivity ?? 36;
+        engine.ignoreStatusBars = saved.ignoreStatusBars ?? true;
+        engine.swapTargetWall = saved.swapTargetWall ?? false;
+        engine.showGrid = saved.showGrid ?? false;
+        engine.snapToGrid = saved.snapToGrid ?? false;
+        engine.showGuide = saved.showGuide ?? true;
+        engine.showSafeZone = saved.showSafeZone ?? true;
+        engine.showAltPaths = saved.showAltPaths ?? false;
+
+        setShowImageOverlay(engine.showImageOverlay);
+        setOverlayAlphaPercent(Math.round(engine.imageOverlayAlpha * 100));
+        setDetectSensitivity(engine.detectSensitivity);
+        setIgnoreStatusBars(engine.ignoreStatusBars);
+        setShowGrid(engine.showGrid);
+        setSnapToGrid(engine.snapToGrid);
+        setShowGuide(engine.showGuide);
+        setShowSafeZone(engine.showSafeZone);
+        setShowAltPaths(engine.showAltPaths);
+        setActivePresetKey(saved.activePresetKey ?? null);
+        setActiveTab(saved.activeTab ?? 'solve');
+
+        const restoredTargets = engine.shapes.filter((s) => s.type === 'target').length;
+        const restoredThin = engine.shapes.filter(
+          (s) => s.type === 'target' && Boolean(s.passThrough)
+        ).length;
+        const restoredWalls = engine.shapes.filter((s) => s.type === 'wall').length;
+        setDetectedTargets(saved.detectedTargets ?? restoredTargets);
+        setDetectedThinTargets(saved.detectedThinTargets ?? restoredThin);
+        setDetectedWalls(saved.detectedWalls ?? restoredWalls);
+
+        // Restore uploaded screenshot image for overlay & re-scan capability
+        if (saved.uploadedImageDataUrl) {
+          engine.uploadedImageDataUrl = saved.uploadedImageDataUrl;
+          setHasUploadedImage(true);
+          const img = new Image();
+          img.onload = () => {
+            if (!cancelled) {
+              engine.uploadedImage = img;
+            }
+          };
+          img.src = saved.uploadedImageDataUrl;
+        } else {
+          engine.uploadedImage = null;
+          engine.uploadedImageDataUrl = null;
+          setHasUploadedImage(false);
+        }
+
+        // Restore previously computed solutions if present
+        if (Array.isArray(saved.solutions) && saved.solutions.length > 0) {
+          engine.solutions = saved.solutions;
+          setSolutions(saved.solutions);
+          const idx =
+            saved.activeSolutionIdx >= 0 &&
+            saved.activeSolutionIdx < saved.solutions.length
+              ? saved.activeSolutionIdx
+              : 0;
+          applyAnalyzedSolution(engine, saved.solutions[idx], idx, false);
+        } else {
+          invalidateSolution();
+        }
+
+        engine.resetCamera();
+        engine.stopSimulation(true);
+        setShapeRevision((r) => r + 1);
+      } else {
+        loadPreset('triangles4x5');
+      }
+
+      hydratedRef.current = true;
+    };
+
+    void hydrate();
+
     return () => {
+      cancelled = true;
       engine.dispose();
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     };
-  }, [engine, loadPreset]);
+  }, [engine, loadPreset, applyAnalyzedSolution, invalidateSolution]);
+
+  // Automatically persist workspace mutations after initial hydration
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(() => {
+      persistTimerRef.current = null;
+      void saveWorkspaceState(buildPersistedSnapshot());
+    }, 180);
+  }, [
+    buildPersistedSnapshot,
+    shapeRevision,
+    solutions,
+    activeSolutionIdx,
+    activePresetKey,
+    activeTab,
+    ballRadius,
+    detectSensitivity,
+    overlayAlphaPercent,
+    ignoreStatusBars,
+    showImageOverlay,
+    hasUploadedImage,
+    showGrid,
+    snapToGrid,
+    showGuide,
+    showSafeZone,
+    showAltPaths,
+  ]);
 
   const runImageExtraction = useCallback(
     (
@@ -263,6 +442,7 @@ export default function App() {
       invalidateSolution();
       engine.stopSimulation(true);
       setShapeRevision((r) => r + 1);
+      return res;
     },
     [engine, invalidateSolution]
   );
@@ -280,20 +460,39 @@ export default function App() {
         const img = new Image();
         img.onload = () => {
           engine.uploadedImage = img;
+          engine.uploadedImageDataUrl = result;
           engine.showImageOverlay = true;
           setHasUploadedImage(true);
           setShowImageOverlay(true);
           engine.resetCamera();
-          runImageExtraction(img);
+          const res = runImageExtraction(img);
           setActiveTab('scan');
-          showToast('Screenshot berhasil dipindai. Klik Auto Solve untuk mencari solusi.');
+          // Commit immediately to IndexedDB so even an instant refresh preserves the uploaded image & shapes
+          hydratedRef.current = true;
+          void saveWorkspaceState(
+            buildPersistedSnapshot({
+              activePresetKey: null,
+              activeTab: 'scan',
+              bgColor: res.bgColor,
+              shapes: res.shapes,
+              uploadedImageDataUrl: result,
+              uploadedRect: res.uploadedRect,
+              showImageOverlay: true,
+              detectedTargets: res.targetCount,
+              detectedThinTargets: res.thinTargetCount,
+              detectedWalls: res.wallCount,
+              solutions: [],
+              activeSolutionIdx: -1,
+            })
+          );
+          showToast('Screenshot berhasil dipindai & tersimpan otomatis.');
         };
         img.onerror = () => showToast('Gagal membaca file gambar.');
         img.src = result;
       };
       reader.readAsDataURL(file);
     },
-    [engine, runImageExtraction, showToast]
+    [engine, runImageExtraction, buildPersistedSnapshot, showToast]
   );
 
   // Global clipboard paste support for screenshots

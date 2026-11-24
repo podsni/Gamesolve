@@ -20,6 +20,11 @@ import {
 import { analyzeAndCenterSolution, solveLevelAsync } from './solver';
 import { getPresetByKey } from './presets';
 import { extractShapesFromImageData } from './cvDetector';
+import {
+  isValidPersistedWorkspace,
+  PersistedWorkspaceState,
+  sanitizeWorkspaceForSave,
+} from './persistence';
 
 test('geometry: rectangle and triangle construction, containment, and transforms', () => {
   const rect = makeRectShape(1, 200, 300, 80, 40, 0, 'target');
@@ -223,5 +228,125 @@ test('physics: passThrough thin white string is destroyed without bouncing the b
   const exitPt = sim.points[sim.points.length - 1];
   assert.ok(exitPt.y > 450, `ball should pass straight down past bottom string, got y=${exitPt.y}`);
 });
+
+test('persistence: sanitizeWorkspaceForSave resets transient hit flags and validates payloads', () => {
+  const sample: PersistedWorkspaceState = {
+    version: 1,
+    savedAt: 0,
+    activePresetKey: null,
+    activeTab: 'scan',
+    bgColor: 'rgb(63, 72, 86)',
+    ballRadius: 4.8,
+    shapes: [
+      {
+        ...makeRectShape(7, 200, 160, 170, 2, 0, 'target'),
+        alive: false,
+        flash: 0.8,
+        passThrough: true,
+      },
+    ],
+    uploadedImageDataUrl: 'data:image/png;base64,AAAA',
+    uploadedRect: { x: 40, y: 0, w: 320, h: 680 },
+    showImageOverlay: true,
+    imageOverlayAlpha: 0.35,
+    detectSensitivity: 36,
+    ignoreStatusBars: true,
+    swapTargetWall: false,
+    detectedTargets: 1,
+    detectedThinTargets: 1,
+    detectedWalls: 0,
+    solutions: [],
+    activeSolutionIdx: -1,
+    showGrid: false,
+    snapToGrid: false,
+    showGuide: true,
+    showSafeZone: true,
+    showAltPaths: false,
+  };
+
+  const clean = sanitizeWorkspaceForSave(sample);
+  assert.equal(isValidPersistedWorkspace(clean), true);
+  assert.equal(clean.shapes[0].alive, true, 'saved shapes must restore alive=true');
+  assert.equal(clean.shapes[0].flash, 0, 'saved shapes must restore flash=0');
+  assert.equal(clean.shapes[0].passThrough, true, 'passThrough flag must be preserved');
+  assert.equal(clean.uploadedImageDataUrl, 'data:image/png;base64,AAAA');
+  assert.equal(isValidPersistedWorkspace(null), false);
+  assert.equal(isValidPersistedWorkspace({ version: 2 }), false);
+});
+
+test('cvDetector: preserves 45-degree beveled trapezoids and strips bottom UI toolbar & hollow hint button', () => {
+  const pw = 240;
+  const ph = 520;
+  const buf = new Uint8ClampedArray(pw * ph * 4);
+  for (let i = 0; i < pw * ph; i++) {
+    buf[i * 4] = 66;
+    buf[i * 4 + 1] = 74;
+    buf[i * 4 + 2] = 86;
+    buf[i * 4 + 3] = 255;
+  }
+  const setPx = (x: number, y: number, r: number, g: number, b: number) => {
+    const i = (y * pw + x) * 4;
+    buf[i] = r;
+    buf[i + 1] = g;
+    buf[i + 2] = b;
+  };
+
+  // 1. Draw a 45-degree beveled white trapezoid (top edge y=140, x=60..180; bottom edge y=164, x=84..156)
+  for (let y = 140; y <= 164; y++) {
+    const inset = y - 140;
+    for (let x = 60 + inset; x <= 180 - inset; x++) {
+      setPx(x, y, 255, 255, 255);
+    }
+  }
+
+  // 2. Draw a hollow dark button outline ("watch ad for hint") at y=410..440, x=70..170
+  for (let x = 70; x <= 170; x++) {
+    setPx(x, 410, 15, 18, 24);
+    setPx(x, 411, 15, 18, 24);
+    setPx(x, 439, 15, 18, 24);
+    setPx(x, 440, 15, 18, 24);
+  }
+  for (let y = 410; y <= 440; y++) {
+    setPx(70, y, 15, 18, 24);
+    setPx(71, y, 15, 18, 24);
+    setPx(169, y, 15, 18, 24);
+    setPx(170, y, 15, 18, 24);
+  }
+
+  // 3. Draw a full-width white footer toolbar at bottom 12% (y=458..519)
+  for (let y = 458; y < ph; y++) {
+    for (let x = 0; x < pw; x++) {
+      setPx(x, y, 255, 255, 255);
+    }
+  }
+
+  let id = 1;
+  const res = extractShapesFromImageData({
+    imgData: buf,
+    pw,
+    ph,
+    detectSensitivity: 36,
+    ignoreStatusBars: true,
+    swapTargetWall: false,
+    allocateId: () => id++,
+  });
+
+  assert.equal(res.targetCount, 1, 'must detect ONLY the white trapezoid, stripping the white footer toolbar');
+  assert.equal(res.wallCount, 0, 'must reject the hollow hint button outline');
+  const trap = res.shapes[0];
+  // Verify top edge is wider than bottom edge (proving 45-degree bevel was preserved, not crushed to 90-deg box)
+  const ys = trap.vertices.map((v) => v.y);
+  const midY = (Math.min(...ys) + Math.max(...ys)) * 0.5;
+  const topXs = trap.vertices.filter((v) => v.y < midY).map((v) => v.x);
+  const botXs = trap.vertices.filter((v) => v.y >= midY).map((v) => v.x);
+  const topWidth = Math.max(...topXs) - Math.min(...topXs);
+  const botWidth = Math.max(...botXs) - Math.min(...botXs);
+  assert.ok(
+    topWidth - botWidth > 35,
+    `beveled trapezoid must preserve wider top (${topWidth.toFixed(1)}) vs shorter bottom (${botWidth.toFixed(1)})`
+  );
+});
+
+
 
 
