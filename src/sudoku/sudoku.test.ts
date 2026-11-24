@@ -1,15 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  BoxDims,
   cloneGrid,
   countFilledCells,
   createEmptyGrid,
   digitToSymbol,
   findConflicts,
-  getBoxDims,
   getCellCandidates,
   getNextSudokuHint,
   KillerCage,
+  parseSymbolRows,
+  resolveBoxDims,
   solveSudoku,
   SUDOKU_PRESETS,
   SudokuGrid,
@@ -21,9 +23,10 @@ import { isValidPersistedSudoku } from './sudokuPersistence';
 function assertValidCompleteSudoku(
   grid: SudokuGrid,
   size: SudokuSize,
-  cages?: KillerCage[]
+  cages?: KillerCage[],
+  boxDims?: BoxDims
 ) {
-  const { boxRows, boxCols } = getBoxDims(size);
+  const { boxRows, boxCols } = resolveBoxDims(size, boxDims);
   assert.equal(grid.length, size);
   for (let r = 0; r < size; r++) {
     const rowSet = new Set(grid[r]);
@@ -204,6 +207,7 @@ test('isValidPersistedSudoku accepts v2 multi-size/Killer payloads and legacy v1
       version: 2,
       savedAt: Date.now(),
       size: 16,
+      boxDims: { boxRows: 4, boxCols: 4 },
       variant: 'classic',
       cages: [],
       givens: createEmptyGrid(16),
@@ -218,4 +222,81 @@ test('isValidPersistedSudoku accepts v2 multi-size/Killer payloads and legacy v1
     }),
     true
   );
+});
+
+test('solveSudoku supports transposed boxDims (3x2 vs 2x3 on 6x6) and solves real user boards uniquely', () => {
+  // IMG_5195 (Sudoku Bliss Hard 6x6 with 3x2 boxes: 3 rows x 2 cols)
+  const img5195 = parseSymbolRows(
+    ['....4.', '.45...', '264...', '...512', '...35.', '.2....'],
+    6
+  );
+  const res5195 = solveSudoku(img5195, {
+    size: 6,
+    boxDims: { boxRows: 3, boxCols: 2 },
+  });
+  assert.equal(res5195.solved, true);
+  assert.equal(res5195.hasMultipleSolutions, false);
+  assert.ok(res5195.solution);
+  assertValidCompleteSudoku(res5195.solution, 6, undefined, {
+    boxRows: 3,
+    boxCols: 2,
+  });
+
+  // IMG_5202 (Dark Navy 6x6 with 2x3 boxes: 2 rows x 3 cols)
+  const img5202 = parseSymbolRows(
+    ['...512', '.52..4', '.1.2.6', '..6153', '26143.', '534621'],
+    6
+  );
+  const res5202 = solveSudoku(img5202, {
+    size: 6,
+    boxDims: { boxRows: 2, boxCols: 3 },
+  });
+  assert.equal(res5202.solved, true);
+  assert.equal(res5202.hasMultipleSolutions, false);
+  assert.ok(res5202.solution);
+  assertValidCompleteSudoku(res5202.solution, 6, undefined, {
+    boxRows: 2,
+    boxCols: 3,
+  });
+
+  // IMG_5201 (Faint-line 9x9) & IMG_5203 (Dark Navy 9x9)
+  const img5201 = parseSymbolRows(
+    [
+      '...61.4..',
+      '.5...46.3',
+      '.8...7...',
+      '......74.',
+      '7.1...2.5',
+      '.94......',
+      '...1...2.',
+      '5.74...8.',
+      '..2.95...',
+    ],
+    9
+  );
+  const res5201 = solveSudoku(img5201, { size: 9 });
+  assert.equal(res5201.solved, true);
+  assert.equal(res5201.hasMultipleSolutions, false);
+  assert.ok(res5201.solution);
+  assertValidCompleteSudoku(res5201.solution, 9);
+
+  const img5203 = parseSymbolRows(
+    [
+      '.2.76...9',
+      '.1..5....',
+      '.......83',
+      '5....1.2.',
+      '.7.3...58',
+      '3...76...',
+      '.....2...',
+      '.34....6.',
+      '.......1.',
+    ],
+    9
+  );
+  const res5203 = solveSudoku(img5203, { size: 9 });
+  assert.equal(res5203.solved, true);
+  assert.equal(res5203.hasMultipleSolutions, false);
+  assert.ok(res5203.solution);
+  assertValidCompleteSudoku(res5203.solution, 9);
 });

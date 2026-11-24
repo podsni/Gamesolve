@@ -17,6 +17,7 @@ import {
   Layers,
 } from 'lucide-react';
 import {
+  BoxDims,
   cloneGrid,
   countFilledCells,
   createEmptyGrid,
@@ -27,6 +28,7 @@ import {
   getCellCandidates,
   getNextSudokuHint,
   KillerCage,
+  resolveBoxDims,
   solveSudoku,
   SUDOKU_PRESETS,
   SudokuGrid,
@@ -123,6 +125,7 @@ function scanModeToOptions(mode: ScanModeChoice): SudokuScanOptions {
 
 export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
   const [size, setSize] = useState<SudokuSize>(9);
+  const [boxDims, setBoxDims] = useState<BoxDims>(() => getBoxDims(9));
   const [variant, setVariant] = useState<SudokuVariant>('classic');
   const [cages, setCages] = useState<KillerCage[]>([]);
   const [givens, setGivens] = useState<SudokuGrid>(() =>
@@ -177,16 +180,26 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
     );
   }, [workingGrid, solution, size]);
 
+  const resolvedBoxDims = useMemo(
+    () => resolveBoxDims(size, boxDims),
+    [size, boxDims]
+  );
+  const { boxRows, boxCols } = resolvedBoxDims;
+
   const conflicts = useMemo(
-    () => findConflicts(workingGrid, { size, cages: activeCages }),
-    [workingGrid, size, activeCages]
+    () =>
+      findConflicts(workingGrid, {
+        size,
+        boxDims: resolvedBoxDims,
+        cages: activeCages,
+      }),
+    [workingGrid, size, resolvedBoxDims, activeCages]
   );
 
   const totalCells = size * size;
   const givenCount = useMemo(() => countFilledCells(givens), [givens]);
   const filledCount = useMemo(() => countFilledCells(displayGrid), [displayGrid]);
   const isComplete = filledCount === totalCells && conflicts.size === 0;
-  const { boxRows, boxCols } = useMemo(() => getBoxDims(size), [size]);
 
   const selectedValue =
     selectedCell &&
@@ -245,6 +258,7 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
       version: 2,
       savedAt: Date.now(),
       size,
+      boxDims: resolvedBoxDims,
       variant,
       cages,
       givens,
@@ -260,6 +274,7 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
     }),
     [
       size,
+      resolvedBoxDims,
       variant,
       cages,
       givens,
@@ -282,6 +297,7 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
       if (cancelled) return;
       if (saved) {
         setSize(saved.size);
+        setBoxDims(resolveBoxDims(saved.size, saved.boxDims));
         setVariant(saved.variant);
         setCages(saved.cages ?? []);
         setGivens(cloneGrid(saved.givens));
@@ -319,6 +335,7 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
     (nextSize: SudokuSize, keepVariant?: SudokuVariant) => {
       const nextVar = keepVariant ?? variant;
       setSize(nextSize);
+      setBoxDims(getBoxDims(nextSize));
       setVariant(nextVar);
       setGivens(createEmptyGrid(nextSize));
       setUserEntries(createEmptyGrid(nextSize));
@@ -334,6 +351,16 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
     [variant]
   );
 
+  const toggleBoxOrientation = useCallback(() => {
+    if (boxRows === boxCols) return;
+    const nextDims: BoxDims = { boxRows: boxCols, boxCols: boxRows };
+    setBoxDims(nextDims);
+    setSolution(null);
+    setActiveHint(null);
+    setSolveMeta(null);
+    onToast(`Susunan kotak diubah ke ${nextDims.boxRows}×${nextDims.boxCols}.`);
+  }, [boxRows, boxCols, onToast]);
+
   const switchVariant = useCallback(
     (nextVariant: SudokuVariant) => {
       if (nextVariant === variant) return;
@@ -346,6 +373,7 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
       if (nextVariant === 'killer' && size > 9) {
         // Default Killer to 9x9 when switching from 12x12/16x16
         setSize(9);
+        setBoxDims(getBoxDims(9));
         setGivens(createEmptyGrid(9));
         setUserEntries(createEmptyGrid(9));
         setCages([]);
@@ -459,7 +487,9 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
 
         const nextGivens = cloneGrid(res.board);
         const emptyUser = createEmptyGrid(res.size);
+        const nextBoxDims = resolveBoxDims(res.size, res.boxDims);
         setSize(res.size);
+        setBoxDims(nextBoxDims);
         setVariant(res.variant);
         setCages(res.cages);
         setGivens(nextGivens);
@@ -482,6 +512,7 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
         void saveSudokuState(
           buildSnapshot({
             size: res.size,
+            boxDims: nextBoxDims,
             variant: res.variant,
             cages: res.cages,
             givens: nextGivens,
@@ -498,12 +529,17 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
 
         const scannedConflicts = findConflicts(nextGivens, {
           size: res.size,
+          boxDims: nextBoxDims,
           cages: res.variant === 'killer' ? res.cages : [],
         });
+        const boxInfo =
+          nextBoxDims.boxRows !== nextBoxDims.boxCols
+            ? ` Kotak ${nextBoxDims.boxRows}×${nextBoxDims.boxCols},`
+            : '';
         const label =
           res.variant === 'killer'
             ? `Killer Sudoku ${res.size}×${res.size} (${res.detectedCount} angka, ${res.detectedCageCount} sangkar)`
-            : `Sudoku ${res.size}×${res.size} (${res.detectedCount} simbol)`;
+            : `Sudoku ${res.size}×${res.size} (${boxInfo} ${res.detectedCount} simbol)`.replace('( ', '(');
 
         if (scannedConflicts.size > 0) {
           onToast(
@@ -612,7 +648,11 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
   }, [selectedCell, cageEditMode, size, setCellDigit]);
 
   const handleSolveAll = useCallback(() => {
-    const res = solveSudoku(workingGrid, { size, cages: activeCages });
+    const res = solveSudoku(workingGrid, {
+      size,
+      boxDims: resolvedBoxDims,
+      cages: activeCages,
+    });
     if (!res.solved || !res.solution) {
       setSolution(null);
       setSolveMeta({
@@ -643,7 +683,7 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
         ? `Solusi ${size}×${size} ditemukan dalam ${res.solveTimeMs.toFixed(1)} ms (lebih dari 1 solusi).`
         : `${variant === 'killer' ? 'Killer Sudoku' : 'Sudoku'} ${size}×${size} terselesaikan 100% dalam ${res.solveTimeMs.toFixed(1)} ms (Solusi Unik).`
     );
-  }, [workingGrid, size, activeCages, variant, buildSnapshot, onToast]);
+  }, [workingGrid, size, resolvedBoxDims, activeCages, variant, buildSnapshot, onToast]);
 
   const handleHintStep = useCallback(() => {
     if (conflicts.size > 0) {
@@ -655,7 +695,11 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
       onToast(`Semua ${totalCells} sel Sudoku sudah terisi lengkap.`);
       return;
     }
-    const hint = getNextSudokuHint(workingGrid, { size, cages: activeCages });
+    const hint = getNextSudokuHint(workingGrid, {
+      size,
+      boxDims: resolvedBoxDims,
+      cages: activeCages,
+    });
     if (!hint) {
       setSolveMeta({
         solveTimeMs: 0,
@@ -683,6 +727,7 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
     workingGrid,
     totalCells,
     size,
+    resolvedBoxDims,
     activeCages,
     userEntries,
     onToast,
@@ -715,6 +760,7 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
   const handleLoadPreset = useCallback(
     (preset: (typeof SUDOKU_PRESETS)[number]) => {
       setSize(preset.size);
+      setBoxDims(resolveBoxDims(preset.size, preset.boxDims));
       setVariant(preset.variant);
       setCages(
         preset.cages
@@ -835,7 +881,7 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
         <div
           className={`w-full ${boardMaxWidthClass} bg-slate-900/90 border border-white/10 rounded-2xl p-2.5 sm:p-4 shadow-2xl`}
         >
-          <div className="flex items-center justify-between gap-2 mb-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
             <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
               <Grid3X3 className="w-4 h-4 text-emerald-400" aria-hidden="true" />
               <span data-testid="sudoku-board-title">
@@ -844,6 +890,17 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
                   : `Papan Sudoku ${size}×${size}`}
                 {size >= 12 ? ` (1–${digitToSymbol(size)})` : ''}
               </span>
+              {boxRows !== boxCols && (
+                <button
+                  type="button"
+                  data-testid="sudoku-box-toggle"
+                  onClick={toggleBoxOrientation}
+                  title="Ubah orientasi blok kotak (misal 2×3 ↔ 3×2)"
+                  className="px-2 py-0.5 rounded-md bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/40 text-[11px] font-bold text-sky-200 transition"
+                >
+                  Kotak {boxRows}×{boxCols} ⇄
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-2 text-[11px] font-semibold">
               {variant === 'killer' && (
@@ -876,6 +933,8 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
           <div
             data-testid="sudoku-board"
             data-size={size}
+            data-box-rows={boxRows}
+            data-box-cols={boxCols}
             data-variant={variant}
             role="grid"
             aria-label={`Papan Sudoku ${size} kali ${size}`}
@@ -979,6 +1038,7 @@ export const SudokuView: React.FC<SudokuViewProps> = ({ onToast }) => {
                 const cellCandidates = canShowCands
                   ? getCellCandidates(workingGrid, r, c, {
                       size,
+                      boxDims: resolvedBoxDims,
                       cages: activeCages,
                     })
                   : [];

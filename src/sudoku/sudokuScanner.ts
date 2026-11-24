@@ -1,9 +1,12 @@
 import {
+  BoxDims,
   createEmptyGrid,
   digitToSymbol,
+  findConflicts,
   getBoxDims,
   getCageHeadCell,
   KillerCage,
+  solveSudoku,
   SudokuGrid,
   SudokuSize,
   SudokuVariant,
@@ -26,6 +29,7 @@ export interface SudokuScanOptions {
 
 export interface SudokuScanResult {
   size: SudokuSize;
+  boxDims: BoxDims;
   variant: SudokuVariant;
   board: SudokuGrid;
   cages: KillerCage[];
@@ -183,30 +187,36 @@ function buildGlyphSignatureFromCrop(
   // Detect hollow ring center (catches small anti-aliased '0' even if 1px hole bridges)
   let cSum = 0;
   let cCnt = 0;
-  for (let y = Math.floor(ch * 0.34); y <= Math.floor(ch * 0.66); y++) {
+  for (let y = Math.floor(ch * 0.32); y <= Math.floor(ch * 0.68); y++) {
     for (let x = Math.floor(cw * 0.34); x <= Math.floor(cw * 0.66); x++) {
       cSum += crop[y * cw + x];
       cCnt++;
     }
   }
   const centerMean = cSum / Math.max(1, cCnt);
-  const topMid = crop[Math.floor(cw * 0.5)] + crop[Math.min(ch - 1, 1) * cw + Math.floor(cw * 0.5)];
-  const botMid =
-    crop[(ch - 1) * cw + Math.floor(cw * 0.5)] +
-    crop[Math.max(0, ch - 2) * cw + Math.floor(cw * 0.5)];
-  const leftMid =
-    crop[Math.floor(ch * 0.5) * cw] +
-    crop[Math.floor(ch * 0.5) * cw + Math.min(cw - 1, 1)];
-  const rightMid =
-    crop[Math.floor(ch * 0.5) * cw + (cw - 1)] +
-    crop[Math.floor(ch * 0.5) * cw + Math.max(0, cw - 2)];
+  const midX = Math.floor(cw * 0.5);
+  const midY = Math.floor(ch * 0.5);
+  const topEdge = Math.max(
+    crop[midX],
+    crop[Math.min(ch - 1, 1) * cw + midX]
+  );
+  const botEdge = Math.max(
+    crop[(ch - 1) * cw + midX],
+    crop[Math.max(0, ch - 2) * cw + midX]
+  );
+  const leftEdge = Math.max(
+    crop[midY * cw],
+    crop[midY * cw + Math.min(cw - 1, 1)]
+  );
+  const rightEdge = Math.max(
+    crop[midY * cw + (cw - 1)],
+    crop[midY * cw + Math.max(0, cw - 2)]
+  );
+  const minRingEdge = Math.min(topEdge, botEdge, leftEdge, rightEdge);
   const centerHollow =
     cw / Math.max(1, ch) >= 0.48 &&
-    centerMean < 0.28 &&
-    topMid >= 0.5 &&
-    botMid >= 0.5 &&
-    leftMid >= 0.5 &&
-    rightMid >= 0.5;
+    ((centerMean < 0.32 && minRingEdge >= 0.38) ||
+      (minRingEdge - centerMean >= 0.16 && centerMean < 0.45));
 
   // Structural cues on original tight crop (helps separate B vs 8, D vs 0, E vs F, C vs G)
   let leftHits = 0;
@@ -289,6 +299,7 @@ function getSymbolTemplates(): GlyphSignature[] {
     '600 44px "Liberation Sans", "DejaVu Sans", sans-serif',
     '400 44px Verdana, Geneva, sans-serif',
     '400 44px "Century Gothic", "Avenir", "Futura", "Trebuchet MS", sans-serif',
+    '500 44px "Quicksand", "Nunito", "Rubik", "Segoe UI", system-ui, sans-serif',
   ];
 
   for (const font of fontSpecs) {
@@ -339,7 +350,12 @@ function classifyGlyph(
   sig: GlyphSignature,
   templates: GlyphSignature[],
   allowedCodes: number[]
-): { code: number; confidence: number } {
+): {
+  code: number;
+  confidence: number;
+  secondCode: number;
+  secondConfidence: number;
+} {
   const allowed = new Set(allowedCodes);
   const bestPerCode = new Float32Array(17).fill(-999);
 
@@ -443,40 +459,57 @@ function classifyGlyph(
 
   let bestCode = -1;
   let bestScore = -999;
+  let secondCode = -1;
+  let secondScore = -999;
   for (const code of allowedCodes) {
-    if (bestPerCode[code] > bestScore) {
-      bestScore = bestPerCode[code];
+    const sc = bestPerCode[code];
+    if (sc > bestScore) {
+      secondScore = bestScore;
+      secondCode = bestCode;
+      bestScore = sc;
       bestCode = code;
+    } else if (sc > secondScore) {
+      secondScore = sc;
+      secondCode = code;
     }
   }
 
   return {
     code: bestCode,
     confidence: Math.max(0, Math.min(1, bestScore)),
+    secondCode,
+    secondConfidence: Math.max(0, Math.min(1, secondScore)),
   };
 }
 
 interface DetectedGridInfo {
   rect: SudokuGridRect;
   size: SudokuSize;
+  boxDims: BoxDims;
   isDarkTheme: boolean;
   bgLum: number;
 }
 
 /**
- * Evaluates how strongly a candidate size `N` (4, 6, 8, 9, 12, 16) matches the internal
- * horizontal & vertical grid lines inside `rect`, subtracting midpoint line energy so that
- * divisors like 4 or 8 NEVER outscore a true 16x16 grid!
+ * Evaluates how strongly a candidate `(size, boxDims)` matches the internal horizontal & vertical
+ * grid lines inside `rect`, combining:
+ * 1) Combined strong + fine-ridge line presence at all `k = 1..size-1` positions
+ * 2) Midpoint & 1/3 interior suppression so divisors (4 or 8 on 16x16, 6 on 9x9) never win
+ * 3) Continuous ink-weight box-divider contrast so thick box lines distinguish `9x9` vs `6x6`
+ *    AND automatically separate `2x3` vs `3x2` (6x6), `2x4` vs `4x2` (8x8), `3x4` vs `4x3` (12x12)!
  */
 function scoreCandidateGridSize(
-  rowScore: Float32Array,
-  colScore: Float32Array,
+  combRow: Float32Array,
+  combCol: Float32Array,
+  inkRow: Float32Array,
+  inkCol: Float32Array,
   rect: SudokuGridRect,
   size: SudokuSize,
+  boxDims: BoxDims,
   pw: number,
   ph: number
 ): number {
-  const { boxRows, boxCols } = getBoxDims(size);
+  const { boxRows, boxCols } = boxDims;
   const cellH = rect.h / size;
   const cellW = rect.w / size;
   const searchRadius = Math.max(2, Math.min(5, Math.round(Math.min(cellW, cellH) * 0.08)));
@@ -484,24 +517,62 @@ function scoreCandidateGridSize(
   let lineSum = 0;
   let lineWeightSum = 0;
   let missingLines = 0;
+
+  let boxInkSum = 0;
+  let boxInkCnt = 0;
+  let thinInkSum = 0;
+  let thinInkCnt = 0;
+
   for (let k = 1; k < size; k++) {
     const ey = Math.round(rect.y + k * cellH);
     const ex = Math.round(rect.x + k * cellW);
     let maxR = 0;
     let maxC = 0;
+    let bestInkR = 0;
+    let bestInkC = 0;
     for (let d = -searchRadius; d <= searchRadius; d++) {
-      if (ey + d >= 0 && ey + d < ph) maxR = Math.max(maxR, rowScore[ey + d]);
-      if (ex + d >= 0 && ex + d < pw) maxC = Math.max(maxC, colScore[ex + d]);
+      if (ey + d >= 0 && ey + d < ph) {
+        if (combRow[ey + d] > maxR) maxR = combRow[ey + d];
+        if (inkRow[ey + d] > bestInkR) bestInkR = inkRow[ey + d];
+      }
+      if (ex + d >= 0 && ex + d < pw) {
+        if (combCol[ex + d] > maxC) maxC = combCol[ex + d];
+        if (inkCol[ex + d] > bestInkC) bestInkC = inkCol[ex + d];
+      }
     }
     if (maxR < 0.42) missingLines++;
     if (maxC < 0.42) missingLines++;
-    const wR = k % boxRows === 0 ? 1.55 : 1.0;
-    const wC = k % boxCols === 0 ? 1.55 : 1.0;
+
+    const isBoxRow = k % boxRows === 0;
+    const isBoxCol = k % boxCols === 0;
+    const wR = isBoxRow ? 1.55 : 1.0;
+    const wC = isBoxCol ? 1.55 : 1.0;
     lineSum += maxR * wR + maxC * wC;
     lineWeightSum += wR + wC;
+
+    if (isBoxRow) {
+      boxInkSum += bestInkR;
+      boxInkCnt++;
+    } else {
+      thinInkSum += bestInkR;
+      thinInkCnt++;
+    }
+    if (isBoxCol) {
+      boxInkSum += bestInkC;
+      boxInkCnt++;
+    } else {
+      thinInkSum += bestInkC;
+      thinInkCnt++;
+    }
   }
   const avgLine = lineSum / Math.max(1, lineWeightSum);
-  const missingPenalty = (missingLines / Math.max(1, (size - 1) * 2)) * 1.4;
+  const missingPenalty = (missingLines / Math.max(1, (size - 1) * 2)) * 1.45;
+
+  // Box-divider contrast: true (size, boxDims) has much heavier ink mass on box dividers
+  // than on regular 1x1 cell dividers (and never puts a missing line on a box divider).
+  const avgBoxInk = boxInkSum / Math.max(1, boxInkCnt);
+  const avgThinInk = thinInkSum / Math.max(1, thinInkCnt);
+  const boxContrast = Math.max(-0.5, Math.min(0.6, (avgBoxInk - avgThinInk) * 0.45));
 
   // Measure line strength at cell midpoints (k + 0.5) * cellSize.
   // For the TRUE size N, midpoints fall inside cell interiors (very low full-span line score).
@@ -513,14 +584,14 @@ function scoreCandidateGridSize(
     let maxR = 0;
     let maxC = 0;
     for (let d = -2; d <= 2; d++) {
-      if (my + d >= 0 && my + d < ph) maxR = Math.max(maxR, rowScore[my + d]);
-      if (mx + d >= 0 && mx + d < pw) maxC = Math.max(maxC, colScore[mx + d]);
+      if (my + d >= 0 && my + d < ph) maxR = Math.max(maxR, combRow[my + d]);
+      if (mx + d >= 0 && mx + d < pw) maxC = Math.max(maxC, combCol[mx + d]);
     }
     midSum += (maxR + maxC) * 0.5;
   }
   const avgMid = midSum / size;
 
-  // Also check 1/3 and 2/3 interior points so N=4 on a 12x12 doesn't get fooled
+  // Also check 1/3 interior points so N=4 on a 12x12 or N=6 on a 9x9 doesn't get fooled
   let thirdPenalty = 0;
   if (size <= 8) {
     let tSum = 0;
@@ -530,22 +601,24 @@ function scoreCandidateGridSize(
       let mr = 0;
       let mc = 0;
       for (let d = -2; d <= 2; d++) {
-        if (ty + d >= 0 && ty + d < ph) mr = Math.max(mr, rowScore[ty + d]);
-        if (tx + d >= 0 && tx + d < pw) mc = Math.max(mc, colScore[tx + d]);
+        if (ty + d >= 0 && ty + d < ph) mr = Math.max(mr, combRow[ty + d]);
+        if (tx + d >= 0 && tx + d < pw) mc = Math.max(mc, combCol[tx + d]);
       }
       tSum += (mr + mc) * 0.5;
     }
     const avgThird = tSum / size;
-    if (avgThird > 0.45) thirdPenalty = (avgThird - 0.35) * 0.8;
+    if (avgThird > 0.45) thirdPenalty = (avgThird - 0.35) * 0.85;
   }
 
-  return avgLine - avgMid * 1.15 - thirdPenalty - missingPenalty;
+  return avgLine + boxContrast - avgMid * 1.15 - thirdPenalty - missingPenalty;
 }
 
 /**
- * Locates the square Sudoku board and auto-detects its grid size (4, 6, 8, 9, 12, or 16).
+ * Locates the Sudoku board (supporting light, dark, pure-black, navy-gradient, and rounded-corner boards)
+ * and auto-detects both its grid size (4, 6, 8, 9, 12, 16) and its box orientation (e.g. 2x3 vs 3x2).
  */
 function findSudokuGridAndSize(
+  rgba: Uint8ClampedArray,
   lum: Uint8Array,
   pw: number,
   ph: number,
@@ -569,34 +642,86 @@ function findSudokuGridAndSize(
   }
   const isDarkTheme = bgLum < 110;
 
+  // Estimate dominant background RGB for chromatic border detection (e.g., bright blue borders on dark navy)
+  let sumR = 0;
+  let sumG = 0;
+  let sumB = 0;
+  let bgCnt = 0;
+  for (let y = yStart; y < yEnd; y += 4) {
+    for (let x = 0; x < pw; x += 4) {
+      const idx = y * pw + x;
+      if (Math.abs(lum[idx] - bgLum) <= 5) {
+        sumR += rgba[idx * 4];
+        sumG += rgba[idx * 4 + 1];
+        sumB += rgba[idx * 4 + 2];
+        bgCnt++;
+      }
+    }
+  }
+  const bgR = bgCnt > 0 ? sumR / bgCnt : bgLum;
+  const bgG = bgCnt > 0 ? sumG / bgCnt : bgLum;
+  const bgB = bgCnt > 0 ? sumB / bgCnt : bgLum;
+
   const isLinePx = (x: number, y: number): boolean => {
-    const v = lum[y * pw + x];
-    return isDarkTheme ? v > bgLum + 32 : v < bgLum - 35;
+    const idx = y * pw + x;
+    const v = lum[idx];
+    if (isDarkTheme ? v > bgLum + 26 : v < bgLum - 28) return true;
+    // Catch colored borders (cyan/blue/indigo) whose RGB differs strongly from background
+    const rgbDiff =
+      Math.abs(rgba[idx * 4] - bgR) +
+      Math.abs(rgba[idx * 4 + 1] - bgG) +
+      Math.abs(rgba[idx * 4 + 2] - bgB);
+    return rgbDiff >= 95 && (isDarkTheme ? v >= bgLum + 10 : v <= bgLum - 10);
   };
 
-  // Horizontal line score per row (fraction of screenshot width that is line-colored)
+  // Horizontal line score per row across central 84% of width (handles rounded outer corners cleanly)
+  // Compute BOTH global contrast AND local 1D vertical ridge so soft ambient backlight glows
+  // (like dark-navy radial glow themes) never merge with and hide crisp thin borders!
+  const gx0 = Math.floor(pw * 0.08);
+  const gx1 = Math.ceil(pw * 0.92);
+  const gSpan = Math.max(1, gx1 - gx0);
   const rowScoreGlobal = new Float32Array(ph);
+  const rowRidgeGlobal = new Float32Array(ph);
   for (let y = 0; y < ph; y++) {
     let cnt = 0;
-    for (let x = 0; x < pw; x++) {
+    let rCnt = 0;
+    const yUp = Math.max(0, y - 5);
+    const yDn = Math.min(ph - 1, y + 5);
+    for (let x = gx0; x < gx1; x++) {
       if (isLinePx(x, y)) cnt++;
+      const v = lum[y * pw + x];
+      const ref = 0.5 * (lum[yUp * pw + x] + lum[yDn * pw + x]);
+      const ridge = isDarkTheme ? v - ref : ref - v;
+      if (ridge >= 18) rCnt++;
     }
-    rowScoreGlobal[y] = cnt / pw;
+    rowScoreGlobal[y] = cnt / gSpan;
+    rowRidgeGlobal[y] = rCnt / gSpan;
   }
 
   const hLines: number[] = [];
   const maxGridLineThickness = Math.max(12, Math.round(ph * 0.014));
-  for (let y = Math.floor(ph * 0.05); y < Math.floor(ph * 0.92); y++) {
-    if (rowScoreGlobal[y] >= 0.52) {
-      let yEndRun = y;
-      while (yEndRun + 1 < ph && rowScoreGlobal[yEndRun + 1] >= 0.42) yEndRun++;
-      // Reject thick solid UI banners/headers (real Sudoku borders are thin lines <= ~12px)
-      if (yEndRun - y <= maxGridLineThickness) {
-        hLines.push((y + yEndRun) * 0.5);
-      }
-      y = yEndRun;
+  const addHLine = (cy: number) => {
+    for (const existing of hLines) {
+      if (Math.abs(existing - cy) <= 6) return;
     }
-  }
+    hLines.push(cy);
+  };
+  const collectHLinesFromProfile = (profile: Float32Array) => {
+    for (let y = Math.floor(ph * 0.05); y < Math.floor(ph * 0.92); y++) {
+      if (profile[y] >= 0.48) {
+        let yEndRun = y;
+        while (yEndRun + 1 < ph && profile[yEndRun + 1] >= 0.38) yEndRun++;
+        // Reject thick solid UI banners/headers (real Sudoku borders are thin lines <= ~12px)
+        if (yEndRun - y <= maxGridLineThickness) {
+          addHLine((y + yEndRun) * 0.5);
+        }
+        y = yEndRun;
+      }
+    }
+  };
+  collectHLinesFromProfile(rowRidgeGlobal);
+  collectHLinesFromProfile(rowScoreGlobal);
+  hLines.sort((a, b) => a - b);
 
   const candidateSizes: SudokuSize[] =
     sizeHint === 'auto' ? SUPPORTED_SUDOKU_SIZES : [sizeHint];
@@ -614,98 +739,271 @@ function findSudokuGridAndSize(
 
       const y0 = Math.max(0, Math.round(top));
       const y1 = Math.min(ph - 1, Math.round(bot));
-      const colScore = new Float32Array(pw);
-      const yStep = Math.max(1, Math.floor((y1 - y0) / 360));
+      // Corner-safe vertical span (skips outer 7.5% on top & bottom so rounded corners never break detection!)
+      const marginY = Math.max(4, Math.round(h * 0.075));
+      const sy0 = Math.min(y1, y0 + marginY);
+      const sy1 = Math.max(sy0, y1 - marginY);
+
+      const strongCol = new Float32Array(pw);
+      const ridgeCol = new Float32Array(pw);
+      const yStep = Math.max(1, Math.floor((sy1 - sy0) / 300));
       let samplesY = 0;
-      for (let y = y0; y <= y1; y += yStep) samplesY++;
+      for (let y = sy0; y <= sy1; y += yStep) samplesY++;
       for (let x = 0; x < pw; x++) {
         let cnt = 0;
-        for (let y = y0; y <= y1; y += yStep) {
+        let rCnt = 0;
+        const xLt = Math.max(0, x - 5);
+        const xRt = Math.min(pw - 1, x + 5);
+        for (let y = sy0; y <= sy1; y += yStep) {
           if (isLinePx(x, y)) cnt++;
+          const v = lum[y * pw + x];
+          const ref = 0.5 * (lum[y * pw + xLt] + lum[y * pw + xRt]);
+          const ridge = isDarkTheme ? v - ref : ref - v;
+          if (ridge >= 18) rCnt++;
         }
-        colScore[x] = cnt / Math.max(1, samplesY);
+        strongCol[x] = cnt / Math.max(1, samplesY);
+        ridgeCol[x] = rCnt / Math.max(1, samplesY);
       }
 
+      // Snap left & right to the ridge peak of their outer border stroke (immune to outer backlight halos!)
+      const colPeak = (x: number) => Math.max(strongCol[x], ridgeCol[x]);
       let left = -1;
       let right = -1;
       for (let x = 0; x < pw; x++) {
-        if (colScore[x] >= 0.78) {
-          left = x;
+        if (colPeak(x) >= 0.72) {
+          let xEnd = x;
+          while (xEnd + 1 < pw && xEnd - x < 12 && colPeak(xEnd + 1) >= 0.65) {
+            xEnd++;
+          }
+          // Prefer peak of ridgeCol inside the run if a sharp border ridge exists
+          let bestX = (x + xEnd) * 0.5;
+          let maxR = 0;
+          for (let kx = x; kx <= xEnd; kx++) {
+            if (ridgeCol[kx] > maxR) maxR = ridgeCol[kx];
+          }
+          if (maxR >= 0.55) {
+            let rx0 = xEnd;
+            let rx1 = x;
+            for (let kx = x; kx <= xEnd; kx++) {
+              if (ridgeCol[kx] >= maxR * 0.85) {
+                if (kx < rx0) rx0 = kx;
+                if (kx > rx1) rx1 = kx;
+              }
+            }
+            bestX = (rx0 + rx1) * 0.5;
+          }
+          left = bestX;
           break;
         }
       }
       for (let x = pw - 1; x >= 0; x--) {
-        if (colScore[x] >= 0.78) {
-          right = x;
+        if (colPeak(x) >= 0.72) {
+          let xStart = x;
+          while (xStart - 1 >= 0 && x - xStart < 12 && colPeak(xStart - 1) >= 0.65) {
+            xStart--;
+          }
+          let bestX = (xStart + x) * 0.5;
+          let maxR = 0;
+          for (let kx = xStart; kx <= x; kx++) {
+            if (ridgeCol[kx] > maxR) maxR = ridgeCol[kx];
+          }
+          if (maxR >= 0.55) {
+            let rx0 = x;
+            let rx1 = xStart;
+            for (let kx = xStart; kx <= x; kx++) {
+              if (ridgeCol[kx] >= maxR * 0.85) {
+                if (kx < rx0) rx0 = kx;
+                if (kx > rx1) rx1 = kx;
+              }
+            }
+            bestX = (rx0 + rx1) * 0.5;
+          }
+          right = bestX;
           break;
         }
       }
       if (left < 0 || right <= left) continue;
+
       const w = right - left;
       const aspectErr = Math.abs(w - h) / Math.max(w, h);
       if (aspectErr > 0.25) continue;
 
-      // Verify left & right borders are continuous in BOTH the top 12% and bottom 12%
-      const capH = Math.max(6, Math.round((y1 - y0) * 0.12));
+      const x0 = Math.max(0, Math.round(left));
+      const x1 = Math.min(pw - 1, Math.round(right));
+
+      // Verify left & right borders are continuous just inside the rounded-corner zone (7.5%..21% from top/bot)
+      const capStart = Math.max(4, Math.round(h * 0.075));
+      const capEnd = Math.max(capStart + 8, Math.round(h * 0.21));
+      const capLen = capEnd - capStart;
       let topCapL = 0;
       let topCapR = 0;
       let botCapL = 0;
       let botCapR = 0;
-      for (let dy = 0; dy < capH; dy++) {
-        if (isLinePx(left, y0 + dy) || isLinePx(Math.min(pw - 1, left + 1), y0 + dy)) topCapL++;
-        if (isLinePx(right, y0 + dy) || isLinePx(Math.max(0, right - 1), y0 + dy)) topCapR++;
-        if (isLinePx(left, y1 - dy) || isLinePx(Math.min(pw - 1, left + 1), y1 - dy)) botCapL++;
-        if (isLinePx(right, y1 - dy) || isLinePx(Math.max(0, right - 1), y1 - dy)) botCapR++;
+      const hasLineNearX = (cx: number, cy: number): boolean => {
+        for (let dx = -2; dx <= 2; dx++) {
+          const nx = cx + dx;
+          if (nx >= 0 && nx < pw && isLinePx(nx, cy)) return true;
+        }
+        return false;
+      };
+      for (let dy = capStart; dy < capEnd; dy++) {
+        if (y0 + dy < ph) {
+          if (hasLineNearX(x0, y0 + dy)) topCapL++;
+          if (hasLineNearX(x1, y0 + dy)) topCapR++;
+        }
+        if (y1 - dy >= 0) {
+          if (hasLineNearX(x0, y1 - dy)) botCapL++;
+          if (hasLineNearX(x1, y1 - dy)) botCapR++;
+        }
       }
       if (
-        topCapL / capH < 0.75 ||
-        topCapR / capH < 0.75 ||
-        botCapL / capH < 0.75 ||
-        botCapR / capH < 0.75
+        topCapL / capLen < 0.72 ||
+        topCapR / capLen < 0.72 ||
+        botCapL / capLen < 0.72 ||
+        botCapR / capLen < 0.72
       ) {
         continue;
       }
 
-      // Compute exact horizontal line profile strictly inside [left..right]
-      const rowScoreLocal = new Float32Array(ph);
-      const xStep = Math.max(1, Math.floor(w / 360));
+      // Corner-safe horizontal span for outer top/bottom border verification & internal line profiles
+      const marginX = Math.max(4, Math.round(w * 0.075));
+      const sx0 = Math.min(x1, x0 + marginX);
+      const sx1 = Math.max(sx0, x1 - marginX);
+      const xStep = Math.max(1, Math.floor((sx1 - sx0) / 260));
       let samplesX = 0;
-      for (let x = left; x <= right; x += xStep) samplesX++;
-      for (let y = y0; y <= y1; y++) {
-        let cnt = 0;
-        for (let x = left; x <= right; x += xStep) {
-          if (isLinePx(x, y)) cnt++;
+      for (let x = sx0; x <= sx1; x += xStep) samplesX++;
+
+      const strongRow = new Float32Array(ph);
+      const combRow = new Float32Array(ph);
+      const rawInkRow = new Float32Array(ph);
+
+      // Estimate local interior board background luminance (handles dark-card-on-black or gradient themes!)
+      const boardHist = new Int32Array(256);
+      const bStepY = Math.max(2, Math.floor((sy1 - sy0) / 60));
+      const bStepX = Math.max(2, Math.floor((sx1 - sx0) / 60));
+      for (let y = sy0; y <= sy1; y += bStepY) {
+        for (let x = sx0; x <= sx1; x += bStepX) {
+          boardHist[lum[y * pw + x]]++;
         }
-        rowScoreLocal[y] = cnt / Math.max(1, samplesX);
+      }
+      let boardBgLum = bgLum;
+      let boardMaxH = 0;
+      for (let b = 0; b < 256; b++) {
+        if (boardHist[b] > boardMaxH) {
+          boardMaxH = boardHist[b];
+          boardBgLum = b;
+        }
+      }
+      const boardDark = boardBgLum < 110;
+
+      for (let y = y0; y <= y1; y++) {
+        let sCnt = 0;
+        let fCnt = 0;
+        let inkSum = 0;
+        const yUp = Math.max(0, y - 4);
+        const yDn = Math.min(ph - 1, y + 4);
+        for (let x = sx0; x <= sx1; x += xStep) {
+          const v = lum[y * pw + x];
+          const strong = isLinePx(x, y);
+          if (strong) sCnt++;
+          const ref = 0.5 * (lum[yUp * pw + x] + lum[yDn * pw + x]);
+          const ridge = boardDark ? v - ref : ref - v;
+          const diffBg = boardDark ? v - boardBgLum : boardBgLum - v;
+          if (strong || ridge >= 5 || (ridge >= 3 && diffBg >= 8)) {
+            fCnt++;
+          }
+          if (diffBg > 6) inkSum += diffBg / 255;
+        }
+        strongRow[y] = sCnt / Math.max(1, samplesX);
+        combRow[y] = Math.max(strongRow[y], fCnt / Math.max(1, samplesX));
+        rawInkRow[y] = inkSum / Math.max(1, samplesX);
       }
 
-      // Outer top & bottom edges must be solid continuous board borders
-      if (rowScoreLocal[y0] < 0.78 || rowScoreLocal[y1] < 0.78) continue;
+      // Outer top & bottom straight edges must be solid continuous borders (check ±2px around y0/y1)
+      let topBorderStr = 0;
+      let botBorderStr = 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        if (y0 + dy >= y0 && y0 + dy <= y1) topBorderStr = Math.max(topBorderStr, strongRow[y0 + dy]);
+        if (y1 + dy >= y0 && y1 + dy <= y1) botBorderStr = Math.max(botBorderStr, strongRow[y1 + dy]);
+      }
+      if (topBorderStr < 0.72 || botBorderStr < 0.72) continue;
+
+      // Compute fine-ridge & ink-mass vertical profiles strictly inside [sy0..sy1]
+      const combCol = new Float32Array(pw);
+      const rawInkCol = new Float32Array(pw);
+      for (let x = x0; x <= x1; x++) {
+        let fCnt = 0;
+        let inkSum = 0;
+        const xLt = Math.max(0, x - 4);
+        const xRt = Math.min(pw - 1, x + 4);
+        for (let y = sy0; y <= sy1; y += yStep) {
+          const v = lum[y * pw + x];
+          const strong = isLinePx(x, y);
+          const ref = 0.5 * (lum[y * pw + xLt] + lum[y * pw + xRt]);
+          const ridge = boardDark ? v - ref : ref - v;
+          const diffBg = boardDark ? v - boardBgLum : boardBgLum - v;
+          if (strong || ridge >= 5 || (ridge >= 3 && diffBg >= 8)) {
+            fCnt++;
+          }
+          if (diffBg > 6) inkSum += diffBg / 255;
+        }
+        combCol[x] = Math.max(strongCol[x], fCnt / Math.max(1, samplesY));
+        rawInkCol[x] = inkSum / Math.max(1, samplesY);
+      }
+
+      // Integrated ink mass over ±2px window captures BOTH line thickness AND contrast strength
+      const inkRow = new Float32Array(ph);
+      for (let y = y0; y <= y1; y++) {
+        let sum = 0;
+        for (let d = -2; d <= 2; d++) {
+          if (y + d >= y0 && y + d <= y1) sum += rawInkRow[y + d];
+        }
+        inkRow[y] = sum;
+      }
+      const inkCol = new Float32Array(pw);
+      for (let x = x0; x <= x1; x++) {
+        let sum = 0;
+        for (let d = -2; d <= 2; d++) {
+          if (x + d >= x0 && x + d <= x1) sum += rawInkCol[x + d];
+        }
+        inkCol[x] = sum;
+      }
 
       const rect: SudokuGridRect = { x: left, y: top, w, h };
 
       for (const sz of candidateSizes) {
-        const gridScore = scoreCandidateGridSize(
-          rowScoreLocal,
-          colScore,
-          rect,
-          sz,
-          pw,
-          ph
-        );
-        const borderBonus =
-          (rowScoreLocal[y0] + rowScoreLocal[y1] + colScore[left] + colScore[right]) *
-          0.06;
-        const totalScore =
-          gridScore * (1 - aspectErr * 0.35) + borderBonus + (w / pw) * 0.12;
-        if (totalScore > bestTotalScore) {
-          bestTotalScore = totalScore;
-          bestInfo = {
+        const defBox = getBoxDims(sz);
+        const boxVariants: BoxDims[] =
+          defBox.boxRows === defBox.boxCols
+            ? [defBox]
+            : [defBox, { boxRows: defBox.boxCols, boxCols: defBox.boxRows }];
+
+        for (const boxDims of boxVariants) {
+          const gridScore = scoreCandidateGridSize(
+            combRow,
+            combCol,
+            inkRow,
+            inkCol,
             rect,
-            size: sz,
-            isDarkTheme,
-            bgLum,
-          };
+            sz,
+            boxDims,
+            pw,
+            ph
+          );
+          const borderBonus =
+            (topBorderStr + botBorderStr + strongCol[x0] + strongCol[x1]) * 0.06;
+          const totalScore =
+            gridScore * (1 - aspectErr * 0.35) + borderBonus + (w / pw) * 0.12;
+          if (totalScore > bestTotalScore) {
+            bestTotalScore = totalScore;
+            bestInfo = {
+              rect,
+              size: sz,
+              boxDims,
+              isDarkTheme: boardDark,
+              bgLum: boardBgLum,
+            };
+          }
         }
       }
     }
@@ -828,7 +1126,8 @@ function estimateCellBgLum(
   gridRect: SudokuGridRect,
   size: SudokuSize,
   r: number,
-  c: number
+  c: number,
+  isDarkTheme: boolean
 ): number {
   const cellW = gridRect.w / size;
   const cellH = gridRect.h / size;
@@ -844,9 +1143,9 @@ function estimateCellBgLum(
   for (let y = y0; y <= y1; y += 2) {
     samples.push(lum[y * pw + x0], lum[y * pw + x1]);
   }
-  if (samples.length === 0) return 255;
+  if (samples.length === 0) return isDarkTheme ? 24 : 255;
   samples.sort((a, b) => a - b);
-  return samples[Math.floor(samples.length * 0.72)];
+  return samples[Math.floor(samples.length * (isDarkTheme ? 0.28 : 0.72))];
 }
 
 /**
@@ -924,7 +1223,8 @@ function extractKillerCages(
   gridRect: SudokuGridRect,
   size: SudokuSize,
   cellBgs: number[][],
-  templates: GlyphSignature[]
+  templates: GlyphSignature[],
+  scannedBoard: SudokuGrid
 ): KillerCage[] {
   const total = size * size;
   const parent = Int32Array.from({ length: total }, (_, i) => i);
@@ -1030,27 +1330,65 @@ function extractKillerCages(
   const cellW = gridRect.w / size;
   const cellH = gridRect.h / size;
   const cages: KillerCage[] = [];
+  const cageAlts: { cageIdx: number; altSum: number; margin: number }[] = [];
   let nextId = 1;
 
   for (const cells of groups.values()) {
     const tempCage: KillerCage = { id: nextId, sum: 0, cells };
     const head = getCageHeadCell(tempCage);
     let parsedSum = 0;
+    const localAlts: { altSum: number; margin: number }[] = [];
 
-    if (head) {
+    // If every cell in this cage already has a clearly scanned big given digit,
+    // its true sum is mathematically guaranteed to equal the sum of those givens!
+    let allGiven = cells.length > 0;
+    let givenSum = 0;
+    for (const [r, c] of cells) {
+      const v = scannedBoard[r]?.[c] ?? 0;
+      if (v <= 0) {
+        allGiven = false;
+        break;
+      }
+      givenSum += v;
+    }
+
+    if (allGiven) {
+      parsedSum = givenSum;
+    } else if (head) {
       const [hr, hc] = head;
       const bgLum = cellBgs[hr][hc];
       const darkBg = bgLum < 110;
 
-      // Top-left corner ROI where small cage sum (e.g. "13", "8", "14", "10", "11") sits.
-      // Inset slightly more on thick box-divider edges so the thick black 3x3 line never leaks into the ROI.
-      const { boxRows, boxCols } = getBoxDims(size);
-      const xInsetFrac = hc > 0 && hc % boxCols === 0 ? 0.062 : 0.04;
-      const yInsetFrac = hr > 0 && hr % boxRows === 0 ? 0.062 : 0.04;
-      const x0 = Math.max(0, Math.round(gridRect.x + hc * cellW + cellW * xInsetFrac));
-      const y0 = Math.max(0, Math.round(gridRect.y + hr * cellH + cellH * yInsetFrac));
+      // Top-left corner ROI starting safely near the edge (0.026) so the top arc of tiny '0's
+      // right below thick 3x3 dividers is NEVER clipped; solid grid border rows/cols are trimmed dynamically!
+      let x0 = Math.max(0, Math.round(gridRect.x + hc * cellW + cellW * 0.026));
+      let y0 = Math.max(0, Math.round(gridRect.y + hr * cellH + cellH * 0.026));
       const x1 = Math.min(pw - 1, Math.round(gridRect.x + hc * cellW + cellW * 0.42));
       const y1 = Math.min(ph - 1, Math.round(gridRect.y + hr * cellH + cellH * 0.34));
+
+      // Dynamically strip leading solid border lines (thick 3x3 dividers) without touching digit tops
+      const maxTrim = Math.max(3, Math.round(Math.min(cellW, cellH) * 0.065));
+      for (let t = 0; t < maxTrim && y0 + 6 < y1; t++) {
+        let darkPx = 0;
+        const spanX = x1 - x0 + 1;
+        for (let x = x0; x <= x1; x++) {
+          const d = darkBg ? lum[y0 * pw + x] - bgLum : bgLum - lum[y0 * pw + x];
+          if (d >= 45) darkPx++;
+        }
+        if (darkPx / Math.max(1, spanX) >= 0.7) y0++;
+        else break;
+      }
+      for (let t = 0; t < maxTrim && x0 + 6 < x1; t++) {
+        let darkPx = 0;
+        const spanY = y1 - y0 + 1;
+        for (let y = y0; y <= y1; y++) {
+          const d = darkBg ? lum[y * pw + x0] - bgLum : bgLum - lum[y * pw + x0];
+          if (d >= 45) darkPx++;
+        }
+        if (darkPx / Math.max(1, spanY) >= 0.7) x0++;
+        else break;
+      }
+
       const rw = x1 - x0 + 1;
       const rh = y1 - y0 + 1;
 
@@ -1164,7 +1502,7 @@ function extractKillerCages(
         for (const comp of rawComps) {
           const bw = comp.maxX - comp.minX + 1;
           const bh = comp.maxY - comp.minY + 1;
-          if (bw > bh * 0.86 && bw >= 10) {
+          if (bw > bh * 0.98 && bw >= 12) {
             const xStart = comp.minX + Math.max(2, Math.floor(bw * 0.28));
             const xEnd = comp.minX + Math.min(bw - 3, Math.ceil(bw * 0.72));
             let bestSplitX = Math.floor((comp.minX + comp.maxX) / 2);
@@ -1179,33 +1517,51 @@ function extractKillerCages(
                 bestSplitX = sx;
               }
             }
-            // Trim both halves tightly around ink pixels without discarding thin stroke columns
-            const pushHalf = (hx0: number, hx1: number) => {
-              let tMinX = hx1;
-              let tMaxX = hx0;
-              let tMinY = comp.maxY;
-              let tMaxY = comp.minY;
-              for (let sy = comp.minY; sy <= comp.maxY; sy++) {
-                for (let sx = hx0; sx <= hx1; sx++) {
-                  if (fg[sy * rw + sx] >= 0.35) {
-                    if (sx < tMinX) tMinX = sx;
-                    if (sx > tMaxX) tMaxX = sx;
-                    if (sy < tMinY) tMinY = sy;
-                    if (sy > tMaxY) tMaxY = sy;
+            // Guard against splitting a single hollow digit ('0', '8', '4') across its center loop:
+            // a hollow digit has strong ink in BOTH its top and bottom thirds along bestSplitX.
+            const thirdH = Math.max(2, Math.round(bh * 0.3));
+            let topArcInk = 0;
+            let botArcInk = 0;
+            for (let sy = comp.minY; sy < comp.minY + thirdH; sy++) {
+              topArcInk += fg[sy * rw + bestSplitX];
+            }
+            for (let sy = comp.maxY - thirdH + 1; sy <= comp.maxY; sy++) {
+              botArcInk += fg[sy * rw + bestSplitX];
+            }
+            const cutsClosedLoop =
+              bw < bh * 1.2 && topArcInk >= 0.85 && botArcInk >= 0.85;
+            const hasTrueValley = !cutsClosedLoop && minColMass <= bh * 0.3;
+
+            if (hasTrueValley) {
+              const pushHalf = (hx0: number, hx1: number) => {
+                let tMinX = hx1;
+                let tMaxX = hx0;
+                let tMinY = comp.maxY;
+                let tMaxY = comp.minY;
+                for (let sy = comp.minY; sy <= comp.maxY; sy++) {
+                  for (let sx = hx0; sx <= hx1; sx++) {
+                    if (fg[sy * rw + sx] >= 0.35) {
+                      if (sx < tMinX) tMinX = sx;
+                      if (sx > tMaxX) tMaxX = sx;
+                      if (sy < tMinY) tMinY = sy;
+                      if (sy > tMaxY) tMaxY = sy;
+                    }
                   }
                 }
-              }
-              if (tMaxX >= tMinX && tMaxY - tMinY + 1 >= Math.max(5, bh * 0.65)) {
-                splitComps.push({
-                  minX: tMinX,
-                  maxX: tMaxX,
-                  minY: tMinY,
-                  maxY: tMaxY,
-                });
-              }
-            };
-            pushHalf(comp.minX, bestSplitX);
-            pushHalf(bestSplitX + 1, comp.maxX);
+                if (tMaxX >= tMinX && tMaxY - tMinY + 1 >= Math.max(5, bh * 0.65)) {
+                  splitComps.push({
+                    minX: tMinX,
+                    maxX: tMaxX,
+                    minY: tMinY,
+                    maxY: tMaxY,
+                  });
+                }
+              };
+              pushHalf(comp.minX, bestSplitX);
+              pushHalf(bestSplitX + 1, comp.maxX);
+            } else {
+              splitComps.push(comp);
+            }
           } else {
             splitComps.push(comp);
           }
@@ -1217,7 +1573,13 @@ function extractKillerCages(
           .filter((comp) => comp.minX < rw * 0.72)
           .slice(0, 2);
 
-        let numStr = '';
+        const digitMatches: {
+          code: number;
+          conf: number;
+          secondCode: number;
+          secondConf: number;
+        }[] = [];
+
         for (const comp of digitComps) {
           const cw = comp.maxX - comp.minX + 1;
           const ch = comp.maxY - comp.minY + 1;
@@ -1230,23 +1592,128 @@ function extractKillerCages(
           const sig = buildGlyphSignatureFromCrop(crop, cw, ch, 0);
           const match = classifyGlyph(sig, templates, digitCodes0to9);
           if (match.code >= 0 && match.confidence >= 0.25) {
-            numStr += String(match.code);
+            digitMatches.push({
+              code: match.code,
+              conf: match.confidence,
+              secondCode: match.secondCode,
+              secondConf: match.secondConfidence,
+            });
           }
         }
+
+        const numStr = digitMatches.map((m) => String(m.code)).join('');
         const val = parseInt(numStr, 10);
         const maxPossible = (cells.length * (2 * size - cells.length + 1)) / 2;
         const minPossible = (cells.length * (cells.length + 1)) / 2;
         if (!Number.isNaN(val) && val >= minPossible && val <= maxPossible) {
           parsedSum = val;
         }
+
+        // Record plausible close runner-up sums (e.g. tiny '10' vs '11', '16' vs '18') for global 405 sum verification
+        for (let di = 0; di < digitMatches.length; di++) {
+          const dm = digitMatches[di];
+          const margin = dm.conf - dm.secondConf;
+          if (dm.secondCode >= 0 && margin <= 0.24) {
+            const altDigits = digitMatches.map((m, idx) =>
+              idx === di ? dm.secondCode : m.code
+            );
+            const altVal = parseInt(altDigits.map(String).join(''), 10);
+            if (
+              !Number.isNaN(altVal) &&
+              altVal !== parsedSum &&
+              altVal >= minPossible &&
+              altVal <= maxPossible
+            ) {
+              localAlts.push({ altSum: altVal, margin });
+            }
+          }
+        }
       }
     }
 
+    const cageIdx = cages.length;
     cages.push({
       id: nextId++,
       sum: parsedSum,
       cells,
     });
+    for (const a of localAlts) {
+      cageAlts.push({ cageIdx, altSum: a.altSum, margin: a.margin });
+    }
+  }
+
+  // Global Killer Sudoku mathematical invariant check:
+  // If cages form a complete partition of all N*N cells, the sum of all cage sums MUST equal N * N * (N + 1) / 2 (405 for 9x9).
+  const coveredCells = cages.reduce((acc, cg) => acc + cg.cells.length, 0);
+  const expectedBoardTotal = (size * size * (size + 1)) / 2;
+  const currentTotal = cages.reduce((acc, cg) => acc + cg.sum, 0);
+
+  if (
+    coveredCells === size * size &&
+    currentTotal !== expectedBoardTotal &&
+    cageAlts.length > 0
+  ) {
+    const neededDelta = expectedBoardTotal - currentTotal;
+    // Sort candidate single-digit OCR alternatives by smallest confidence margin (most ambiguous first)
+    cageAlts.sort((a, b) => a.margin - b.margin);
+    const pool = cageAlts.slice(0, 14);
+
+    // Search subsets of size 1..3 matching neededDelta that make the Killer Sudoku legally solvable
+    let bestCombo: { cageIdx: number; altSum: number; margin: number }[] = [];
+    let bestPenalty = Infinity;
+
+    const tryCombo = (combo: typeof pool) => {
+      const usedCages = new Set<number>();
+      let delta = 0;
+      let pen = 0;
+      for (const item of combo) {
+        if (usedCages.has(item.cageIdx)) return;
+        usedCages.add(item.cageIdx);
+        delta += item.altSum - cages[item.cageIdx].sum;
+        pen += item.margin;
+      }
+      if (delta !== neededDelta || pen >= bestPenalty) return;
+
+      const testCages = cages.map((cg, idx) => {
+        const hit = combo.find((c) => c.cageIdx === idx);
+        return hit ? { ...cg, sum: hit.altSum } : cg;
+      });
+      if (findConflicts(scannedBoard, { size, cages: testCages }).size > 0) return;
+      const check = solveSudoku(scannedBoard, { size, cages: testCages });
+      if (check.solved) {
+        bestPenalty = pen;
+        bestCombo = combo;
+      }
+    };
+
+    for (let i = 0; i < pool.length; i++) {
+      tryCombo([pool[i]]);
+    }
+    if (bestCombo.length === 0) {
+      for (let i = 0; i < pool.length; i++) {
+        for (let j = i + 1; j < pool.length; j++) {
+          tryCombo([pool[i], pool[j]]);
+        }
+      }
+    }
+    if (bestCombo.length === 0) {
+      for (let i = 0; i < Math.min(pool.length, 10); i++) {
+        for (let j = i + 1; j < Math.min(pool.length, 10); j++) {
+          for (let k = j + 1; k < Math.min(pool.length, 10); k++) {
+            tryCombo([pool[i], pool[j], pool[k]]);
+          }
+        }
+      }
+    }
+
+    if (bestCombo.length > 0) {
+      for (const item of bestCombo) {
+        cages[item.cageIdx] = {
+          ...cages[item.cageIdx],
+          sum: item.altSum,
+        };
+      }
+    }
   }
 
   return cages;
@@ -1272,6 +1739,7 @@ export function scanSudokuFromImage(
   const ph = Math.max(120, Math.round(img.height * scale));
 
   const fallbackSize: SudokuSize = sizeHint === 'auto' ? 9 : sizeHint;
+  const fallbackBoxDims = getBoxDims(fallbackSize);
   const fallbackVariant: SudokuVariant = variantHint === 'auto' ? 'classic' : variantHint;
 
   const canvas = document.createElement('canvas');
@@ -1281,6 +1749,7 @@ export function scanSudokuFromImage(
   if (!ctx) {
     return {
       size: fallbackSize,
+      boxDims: fallbackBoxDims,
       variant: fallbackVariant,
       board: createEmptyGrid(fallbackSize),
       cages: [],
@@ -1306,10 +1775,11 @@ export function scanSudokuFromImage(
     );
   }
 
-  const gridInfo = findSudokuGridAndSize(lum, pw, ph, sizeHint);
+  const gridInfo = findSudokuGridAndSize(rgba, lum, pw, ph, sizeHint);
   if (!gridInfo) {
     return {
       size: fallbackSize,
+      boxDims: fallbackBoxDims,
       variant: fallbackVariant,
       board: createEmptyGrid(fallbackSize),
       cages: [],
@@ -1322,11 +1792,11 @@ export function scanSudokuFromImage(
     };
   }
 
-  const { rect: gridRect, size } = gridInfo;
+  const { rect: gridRect, size, boxDims, isDarkTheme } = gridInfo;
   const templates = getSymbolTemplates();
   const cellBgs: number[][] = Array.from({ length: size }, (_, r) =>
     Array.from({ length: size }, (_, c) =>
-      estimateCellBgLum(lum, pw, ph, gridRect, size, r, c)
+      estimateCellBgLum(lum, pw, ph, gridRect, size, r, c, isDarkTheme)
     )
   );
 
@@ -1338,9 +1808,6 @@ export function scanSudokuFromImage(
         : detectIsKillerSudoku(rgba, lum, pw, ph, gridRect, size, cellBgs);
 
   const variant: SudokuVariant = isKiller ? 'killer' : 'classic';
-  const cages: KillerCage[] = isKiller
-    ? extractKillerCages(rgba, lum, pw, ph, gridRect, size, cellBgs, templates)
-    : [];
 
   const allowedSymbolCodes = Array.from({ length: size }, (_, i) => i + 1);
   const board = createEmptyGrid(size);
@@ -1369,25 +1836,38 @@ export function scanSudokuFromImage(
       const cellBgLum = cellBgs[r][c];
       const darkCellBg = cellBgLum < 110;
 
-      const fg = new Float32Array(rw * rh);
-      const bin = new Uint8Array(rw * rh);
-      const thresh = size >= 12 ? 40 : 46;
-      let fgCount = 0;
-
+      const diffs = new Float32Array(rw * rh);
+      let cellMaxDiff = 0;
       for (let y = 0; y < rh; y++) {
         for (let x = 0; x < rw; x++) {
           const v = lum[(y0 + y) * pw + (x0 + x)];
-          const diff = darkCellBg ? v - cellBgLum : cellBgLum - v;
-          if (diff > 12) {
-            fg[y * rw + x] = Math.min(
-              1,
-              diff / Math.max(92, darkCellBg ? 245 - cellBgLum : cellBgLum - 15)
-            );
-          }
-          if (diff >= thresh) {
-            bin[y * rw + x] = 1;
-            fgCount++;
-          }
+          const diff = Math.max(0, darkCellBg ? v - cellBgLum : cellBgLum - v);
+          diffs[y * rw + x] = diff;
+          if (diff > cellMaxDiff) cellMaxDiff = diff;
+        }
+      }
+      if (cellMaxDiff < 38) continue;
+
+      const fg = new Float32Array(rw * rh);
+      const bin = new Uint8Array(rw * rh);
+      const normDenom = Math.max(
+        78,
+        Math.min(darkCellBg ? 220 : 210, cellMaxDiff)
+      );
+      const thresh = Math.max(
+        30,
+        Math.min(size >= 12 ? 40 : 46, cellMaxDiff * 0.36)
+      );
+      let fgCount = 0;
+
+      for (let i = 0; i < rw * rh; i++) {
+        const diff = diffs[i];
+        if (diff > 12) {
+          fg[i] = Math.min(1, diff / normDenom);
+        }
+        if (diff >= thresh) {
+          bin[i] = 1;
+          fgCount++;
         }
       }
 
@@ -1458,7 +1938,7 @@ export function scanSudokuFromImage(
           const bh = maxY - minY + 1;
           const bw = maxX - minX + 1;
           // In Killer mode, ignore small cage-sum digits in the top-left corner
-          const minHeightFrac = isKiller ? 0.38 : 0.3;
+          const minHeightFrac = isKiller ? 0.38 : 0.28;
           if (bh < rh * minHeightFrac || bw > rw * 0.96) continue;
           if (isKiller && maxY < rh * 0.38 && maxX < rw * 0.45) continue;
 
@@ -1489,8 +1969,24 @@ export function scanSudokuFromImage(
     }
   }
 
+  // Extract Killer cages AFTER scanning big digits so fully-given cages cross-verify their sum cleanly
+  const cages: KillerCage[] = isKiller
+    ? extractKillerCages(
+        rgba,
+        lum,
+        pw,
+        ph,
+        gridRect,
+        size,
+        cellBgs,
+        templates,
+        board
+      )
+    : [];
+
   return {
     size,
+    boxDims,
     variant,
     board,
     cages,

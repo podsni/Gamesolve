@@ -1,6 +1,8 @@
 import {
+  BoxDims,
   isSupportedSize,
   KillerCage,
+  resolveBoxDims,
   SudokuGrid,
   SudokuSize,
   SudokuVariant,
@@ -11,6 +13,7 @@ export interface PersistedSudokuState {
   version: 2;
   savedAt: number;
   size: SudokuSize;
+  boxDims?: BoxDims;
   variant: SudokuVariant;
   cages: KillerCage[];
   givens: SudokuGrid;
@@ -79,11 +82,18 @@ export function isValidPersistedSudoku(raw: unknown): raw is PersistedSudokuStat
 }
 
 function upgradeToV2(raw: Record<string, unknown>): PersistedSudokuState {
-  if (raw.version === 2) return raw as unknown as PersistedSudokuState;
+  if (raw.version === 2) {
+    const typed = raw as unknown as PersistedSudokuState;
+    return {
+      ...typed,
+      boxDims: resolveBoxDims(typed.size, typed.boxDims),
+    };
+  }
   return {
     version: 2,
     savedAt: typeof raw.savedAt === 'number' ? raw.savedAt : Date.now(),
     size: 9,
+    boxDims: { boxRows: 3, boxCols: 3 },
     variant: 'classic',
     cages: [],
     givens: raw.givens as SudokuGrid,

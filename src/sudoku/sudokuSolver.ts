@@ -15,6 +15,7 @@ export interface KillerCage {
 
 export interface SudokuSolveOptions {
   size?: SudokuSize;
+  boxDims?: BoxDims;
   cages?: KillerCage[];
 }
 
@@ -40,6 +41,7 @@ export interface SudokuPreset {
   label: string;
   difficulty: string;
   size: SudokuSize;
+  boxDims?: BoxDims;
   variant: SudokuVariant;
   board: SudokuGrid;
   cages?: KillerCage[];
@@ -62,6 +64,19 @@ export function getBoxDims(size: SudokuSize): BoxDims {
     case 16:
       return { boxRows: 4, boxCols: 4 };
   }
+}
+
+export function isValidBoxDims(size: SudokuSize, dims?: BoxDims | null): dims is BoxDims {
+  if (!dims) return false;
+  const def = getBoxDims(size);
+  return (
+    (dims.boxRows === def.boxRows && dims.boxCols === def.boxCols) ||
+    (dims.boxRows === def.boxCols && dims.boxCols === def.boxRows)
+  );
+}
+
+export function resolveBoxDims(size: SudokuSize, dims?: BoxDims | null): BoxDims {
+  return isValidBoxDims(size, dims) ? dims : getBoxDims(size);
 }
 
 export function isSupportedSize(n: number): n is SudokuSize {
@@ -172,7 +187,7 @@ export function findConflicts(
   options?: SudokuSolveOptions
 ): Set<string> {
   const size = options?.size ?? inferGridSize(grid);
-  const { boxRows, boxCols } = getBoxDims(size);
+  const { boxRows, boxCols } = resolveBoxDims(size, options?.boxDims);
   const conflicts = new Set<string>();
 
   // Rows
@@ -292,7 +307,7 @@ export function getCellCandidates(
 ): number[] {
   const size = options?.size ?? inferGridSize(grid);
   if (grid[row][col] !== 0) return [];
-  const { boxRows, boxCols } = getBoxDims(size);
+  const { boxRows, boxCols } = resolveBoxDims(size, options?.boxDims);
   const fullMask = (1 << size) - 1;
 
   let usedMask = 0;
@@ -379,13 +394,14 @@ export function solveSudoku(
 ): SudokuSolveResult {
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const size = options?.size ?? inferGridSize(grid);
-  const { boxRows, boxCols } = getBoxDims(size);
+  const boxDims = resolveBoxDims(size, options?.boxDims);
+  const { boxRows, boxCols } = boxDims;
   const boxesPerRow = size / boxCols;
   const cages = (options?.cages ?? []).filter(
     (c) => c.cells.length > 0 && c.sum > 0
   );
 
-  const conflicts = findConflicts(grid, { size, cages });
+  const conflicts = findConflicts(grid, { size, boxDims, cages });
   if (conflicts.size > 0) {
     return {
       solved: false,
@@ -798,10 +814,11 @@ export function getNextSudokuHint(
   options?: SudokuSolveOptions
 ): SudokuHint | null {
   const size = options?.size ?? inferGridSize(grid);
-  const { boxRows, boxCols } = getBoxDims(size);
+  const boxDims = resolveBoxDims(size, options?.boxDims);
+  const { boxRows, boxCols } = boxDims;
   const cages = options?.cages ?? [];
 
-  const solved = solveSudoku(grid, { size, cages });
+  const solved = solveSudoku(grid, { size, boxDims, cages });
   if (!solved.solved || !solved.solution) return null;
 
   // 0. Killer Cage with exactly 1 empty cell left
@@ -839,7 +856,7 @@ export function getNextSudokuHint(
   for (let r = 0; r < size; r++) {
     for (let c = 0; c < size; c++) {
       if (grid[r][c] !== 0) continue;
-      const cands = getCellCandidates(grid, r, c, { size, cages });
+      const cands = getCellCandidates(grid, r, c, { size, boxDims, cages });
       if (cands.length === 1) {
         const sym = digitToSymbol(cands[0]);
         return {
@@ -856,7 +873,7 @@ export function getNextSudokuHint(
 
   const candGrid: number[][][] = Array.from({ length: size }, (_, r) =>
     Array.from({ length: size }, (_, c) =>
-      getCellCandidates(grid, r, c, { size, cages })
+      getCellCandidates(grid, r, c, { size, boxDims, cages })
     )
   );
 
