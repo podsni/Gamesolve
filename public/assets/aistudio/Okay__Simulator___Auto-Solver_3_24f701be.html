@@ -1,0 +1,3653 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Okay? — Simulator & Auto-Solver</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    /* Base typography & touch optimization */
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: radial-gradient(circle at top left, #1e293b 0%, #0f172a 55%, #070b14 100%);
+      color: #f8fafc;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Interactive Game Stage Frame */
+    .stage-frame {
+      position: relative;
+      width: 100%;
+      max-width: 440px;
+      aspect-ratio: 400 / 680;
+      border-radius: 26px;
+      overflow: hidden;
+      background: #1e2530;
+      box-shadow:
+        0 28px 65px -16px rgba(0, 0, 0, 0.78),
+        0 0 0 1px rgba(255, 255, 255, 0.14),
+        inset 0 1px 0 rgba(255, 255, 255, 0.16);
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+
+    canvas#gameCanvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+
+    canvas.cursor-play { cursor: crosshair; }
+    canvas.cursor-pan { cursor: grab; }
+    canvas.cursor-pan:active { cursor: grabbing; }
+    canvas.cursor-edit { cursor: default; }
+
+    /* Tactile Game Buttons */
+    .btn-primary {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      box-shadow: 0 8px 22px -5px rgba(16, 185, 129, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+      transition: transform 0.14s ease, box-shadow 0.14s ease, filter 0.14s ease;
+    }
+    .btn-primary:hover:not(:disabled) {
+      filter: brightness(1.08);
+      transform: translateY(-1px);
+    }
+    .btn-primary:active:not(:disabled) {
+      transform: translateY(1px) scale(0.98);
+    }
+
+    .btn-accent {
+      background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+      box-shadow: 0 8px 22px -5px rgba(99, 102, 241, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+      transition: transform 0.14s ease, box-shadow 0.14s ease, filter 0.14s ease;
+    }
+    .btn-accent:hover:not(:disabled) {
+      filter: brightness(1.08);
+      transform: translateY(-1px);
+    }
+    .btn-accent:active:not(:disabled) {
+      transform: translateY(1px) scale(0.98);
+    }
+
+    .btn-glass {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.11);
+      transition: background 0.14s ease, transform 0.12s ease, border-color 0.14s ease, color 0.14s ease;
+    }
+    .btn-glass:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.22);
+    }
+    .btn-glass:active:not(:disabled) {
+      transform: scale(0.97);
+    }
+    .btn-glass.active-toggle {
+      background: rgba(99, 102, 241, 0.28);
+      border-color: rgba(129, 140, 248, 0.78);
+      color: #ffffff;
+    }
+    .btn-glass.active-emerald {
+      background: rgba(16, 185, 129, 0.24);
+      border-color: rgba(52, 211, 153, 0.75);
+      color: #ecfdf5;
+    }
+
+    /* Segmented Tabs */
+    .tab-btn {
+      transition: all 0.16s ease;
+      color: #94a3b8;
+    }
+    .tab-btn.active {
+      background: linear-gradient(135deg, rgba(99, 102, 241, 0.32), rgba(16, 185, 129, 0.22));
+      color: #ffffff;
+      border-color: rgba(129, 140, 248, 0.55);
+      box-shadow: 0 4px 14px -4px rgba(0, 0, 0, 0.4);
+    }
+
+    /* Tool Pill inside stage */
+    .tool-pill {
+      transition: all 0.14s ease;
+      color: #cbd5e1;
+    }
+    .tool-pill.active {
+      background: #10b981;
+      color: #022c22;
+      font-weight: 700;
+      box-shadow: 0 2px 10px rgba(16, 185, 129, 0.45);
+    }
+    .tool-pill.active-pan {
+      background: #38bdf8;
+      color: #082f49;
+      font-weight: 700;
+      box-shadow: 0 2px 10px rgba(56, 189, 248, 0.45);
+    }
+    .tool-pill.active-edit {
+      background: #f472b6;
+      color: #500724;
+      font-weight: 700;
+      box-shadow: 0 2px 10px rgba(244, 114, 182, 0.45);
+    }
+
+    .glass-panel {
+      background: rgba(15, 23, 42, 0.72);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      box-shadow: 0 20px 45px -20px rgba(0, 0, 0, 0.68);
+    }
+
+    .drop-active {
+      border-color: #34d399 !important;
+      background: rgba(16, 185, 129, 0.14) !important;
+    }
+
+    input[type="range"] {
+      accent-color: #10b981;
+    }
+
+    /* Multi-Solution Comparison Cards */
+    .sol-card {
+      background: rgba(15, 23, 42, 0.62);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      transition: all 0.16s ease;
+    }
+    .sol-card:hover {
+      background: rgba(30, 41, 59, 0.78);
+      border-color: rgba(255, 255, 255, 0.22);
+      transform: translateY(-1px);
+    }
+    .sol-card.active {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.18), rgba(56, 189, 248, 0.14));
+      border-color: rgba(52, 211, 153, 0.78);
+      box-shadow: 0 8px 24px -10px rgba(16, 185, 129, 0.45);
+    }
+
+    /* Toast animation */
+    @keyframes toastIn {
+      from { opacity: 0; transform: translate(-50%, 14px); }
+      to { opacity: 1; transform: translate(-50%, 0); }
+    }
+    .toast-anim {
+      animation: toastIn 0.2s ease-out forwards;
+    }
+  </style>
+</head>
+<body class="antialiased selection:bg-emerald-500/30">
+
+  <!-- Hidden Processing Canvas & File Picker -->
+  <canvas id="procCanvas" class="hidden"></canvas>
+  <input type="file" id="imageInput" accept="image/*" class="hidden" />
+
+  <!-- Main Wrapper -->
+  <div class="max-w-6xl mx-auto px-3 sm:px-6 py-4 sm:py-6 flex flex-col gap-4 sm:gap-5">
+
+    <!-- Header -->
+    <header class="flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-400 to-indigo-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+          <svg class="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="6" cy="18" r="2.5" fill="currentColor" />
+            <path d="M8 16L17 7L12 4" stroke-dasharray="2.5 2.5" />
+            <polygon points="15 4 21 4 21 10" fill="currentColor" stroke="none" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-lg sm:text-xl font-extrabold tracking-tight text-white leading-tight">
+            Okay? <span class="text-emerald-400 font-semibold">Simulator & Auto-Solver</span>
+          </h1>
+          <p class="text-xs text-slate-400">Zoom & geser bebas, atur posisi presisi, lalu Auto-Solve secara rapi</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <button id="btnGridOverlay" class="btn-glass px-3 py-2 rounded-xl text-xs font-semibold text-slate-200 flex items-center gap-1.5" title="Tampilkan Grid Bantu">
+          <span>#</span>
+          <span class="hidden sm:inline">Grid</span>
+        </button>
+        <button id="btnMute" class="btn-glass px-3 py-2 rounded-xl text-xs font-semibold text-slate-200 flex items-center gap-1.5" title="Suara Kalimba">
+          <span id="muteIcon">🔊</span>
+          <span class="hidden sm:inline">Suara</span>
+        </button>
+        <button id="btnResetBoard" class="btn-glass px-3 py-2 rounded-xl text-xs font-semibold text-slate-200 flex items-center gap-1.5" title="Reset Papan & Zoom">
+          <span>↺</span>
+          <span>Reset</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Layout Grid -->
+    <main class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+
+      <!-- LEFT COLUMN: Interactive Zoomable Stage + Quick Controls -->
+      <section class="lg:col-span-6 xl:col-span-5 flex flex-col items-center gap-3 w-full">
+
+        <!-- Stage Mode Switcher (Top of Canvas) -->
+        <div class="w-full max-w-[440px] glass-panel p-1.5 rounded-2xl grid grid-cols-3 gap-1.5">
+          <button id="toolPlay" class="tool-pill active py-2 px-2 rounded-xl text-xs flex items-center justify-center gap-1.5">
+            <span>🎯</span>
+            <span>Tembak</span>
+          </button>
+          <button id="toolPan" class="tool-pill py-2 px-2 rounded-xl text-xs flex items-center justify-center gap-1.5">
+            <span>✋</span>
+            <span>Geser / Drag</span>
+          </button>
+          <button id="toolEdit" class="tool-pill py-2 px-2 rounded-xl text-xs flex items-center justify-center gap-1.5">
+            <span>✏️</span>
+            <span>Edit Posisi</span>
+          </button>
+        </div>
+
+        <!-- Stage Container -->
+        <div class="stage-frame" id="stageContainer">
+          <canvas id="gameCanvas" class="cursor-play"></canvas>
+
+          <!-- Top HUD inside canvas -->
+          <div class="pointer-events-none absolute top-3 left-3 right-3 flex items-center justify-between gap-2">
+            <div class="bg-slate-950/75 backdrop-blur-md border border-white/15 px-3 py-1.5 rounded-full flex items-center gap-2 shadow-lg">
+              <span class="w-2.5 h-2.5 rounded-sm bg-white inline-block"></span>
+              <span id="hudTargetCount" class="text-xs font-extrabold text-white tracking-wide">16 / 16</span>
+              <span class="text-[11px] text-slate-300">Target</span>
+            </div>
+
+            <div id="hudZoomBadge" class="bg-slate-950/75 backdrop-blur-md border border-white/15 px-2.5 py-1.5 rounded-full text-[11px] font-mono font-bold text-sky-300 shadow-lg">
+              100%
+            </div>
+          </div>
+
+          <!-- Floating Zoom Controls (Bottom-Right of Stage) -->
+          <div class="absolute bottom-3 right-3 flex flex-col gap-1.5 z-10">
+            <button id="btnZoomIn" class="w-9 h-9 rounded-xl bg-slate-950/80 hover:bg-slate-900 border border-white/15 text-white text-base font-bold flex items-center justify-center shadow-lg active:scale-95 transition" title="Zoom In (+)">+</button>
+            <button id="btnZoomReset" class="w-9 h-9 rounded-xl bg-slate-950/80 hover:bg-slate-900 border border-white/15 text-sky-300 text-[10px] font-bold flex items-center justify-center shadow-lg active:scale-95 transition" title="Reset Zoom (100%)">FIT</button>
+            <button id="btnZoomOut" class="w-9 h-9 rounded-xl bg-slate-950/80 hover:bg-slate-900 border border-white/15 text-white text-base font-bold flex items-center justify-center shadow-lg active:scale-95 transition" title="Zoom Out (-)">−</button>
+          </div>
+
+          <!-- Floating Tip inside Bottom-Left of Stage -->
+          <div id="stageHintBadge" class="pointer-events-none absolute bottom-3 left-3 max-w-[72%] bg-slate-950/70 backdrop-blur-md border border-white/10 px-2.5 py-1.5 rounded-xl text-[10px] text-slate-300 leading-snug">
+            Scroll / cubit 2 jari untuk zoom. Tarik untuk membidik.
+          </div>
+
+          <!-- Solver Progress Overlay -->
+          <div id="solverOverlay" class="hidden absolute inset-0 bg-slate-950/65 backdrop-blur-[3px] flex flex-col items-center justify-center p-6 text-center z-20">
+            <div class="w-12 h-12 rounded-full border-4 border-emerald-400/25 border-t-emerald-400 animate-spin mb-3"></div>
+            <p class="text-sm font-bold text-white mb-1" id="solverStatusTitle">Mencari Solusi Optimal...</p>
+            <p class="text-xs text-slate-300 mb-3" id="solverStatusSub">Memindai lintasan pantulan...</p>
+            <div class="w-52 h-2 bg-slate-800 rounded-full overflow-hidden mb-4">
+              <div id="solverProgressBar" class="h-full bg-gradient-to-r from-emerald-400 to-sky-400 transition-all duration-150" style="width: 8%"></div>
+            </div>
+            <button id="btnCancelSolve" class="btn-glass px-4 py-2 rounded-xl text-xs font-semibold text-rose-300 hover:text-white">
+              Batalkan
+            </button>
+          </div>
+
+          <!-- Victory Banner -->
+          <div id="winBanner" class="hidden pointer-events-none absolute top-14 left-3 right-3 bg-emerald-500/95 backdrop-blur-md text-slate-950 px-3.5 py-2.5 rounded-2xl shadow-xl flex items-center justify-between z-10">
+            <div class="flex items-center gap-2">
+              <span class="text-lg">✨</span>
+              <div>
+                <p class="text-xs font-extrabold uppercase tracking-wider leading-none" id="winBannerTitle">Level Selesai!</p>
+                <p class="text-[11px] font-semibold text-emerald-950/85 mt-0.5" id="winBannerSub">Semua target tersapu bersih</p>
+              </div>
+            </div>
+            <span class="text-xs font-extrabold bg-slate-950/15 px-2.5 py-1 rounded-lg" id="winBounceCount">0x</span>
+          </div>
+        </div>
+
+        <!-- Primary Action Buttons -->
+        <div class="w-full max-w-[440px] grid grid-cols-2 gap-2.5">
+          <button id="btnAutoSolve" class="btn-primary py-3 px-4 rounded-2xl text-sm font-bold text-white flex items-center justify-center gap-2">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </svg>
+            <span>Auto Solve</span>
+          </button>
+
+          <button id="btnUploadQuick" class="btn-accent py-3 px-4 rounded-2xl text-sm font-bold text-white flex items-center justify-center gap-2">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="3" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <polyline points="21 15 16 10 5 21" />
+            </svg>
+            <span>Upload Screenshot</span>
+          </button>
+        </div>
+
+        <!-- Playback & Display Bar -->
+        <div class="w-full max-w-[440px] grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <button id="btnReplay" class="btn-glass py-2.5 px-2 rounded-xl text-xs font-semibold text-slate-200 flex items-center justify-center gap-1.5 disabled:opacity-40" disabled>
+            <span>▶</span>
+            <span>Putar Ulang</span>
+          </button>
+          <button id="btnSlowMo" class="btn-glass py-2.5 px-2 rounded-xl text-xs font-semibold text-slate-200 flex items-center justify-center gap-1.5">
+            <span>🐢</span>
+            <span id="slowMoLabel">Normal 1x</span>
+          </button>
+          <button id="btnShowGuide" class="btn-glass active-emerald py-2.5 px-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5">
+            <span>🧭</span>
+            <span>Jalur Jelas</span>
+          </button>
+          <button id="btnFocusStart" class="btn-glass py-2.5 px-2 rounded-xl text-xs font-semibold text-sky-300 flex items-center justify-center gap-1.5 disabled:opacity-40" disabled title="Zoom otomatis ke titik mulai & panah bidik">
+            <span>🔍</span>
+            <span>Fokus Awal</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- RIGHT COLUMN: Neatly Organized Tabbed Workspace -->
+      <section class="lg:col-span-6 xl:col-span-7 flex flex-col gap-4 w-full">
+
+        <!-- Tab Navigation Bar -->
+        <div class="glass-panel p-1.5 rounded-2xl grid grid-cols-3 gap-1.5">
+          <button data-tab="solve" class="tab-btn active border border-transparent py-2.5 px-2 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5">
+            <span>🎯</span>
+            <span>Solve & Level</span>
+          </button>
+          <button data-tab="scan" class="tab-btn border border-transparent py-2.5 px-2 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5">
+            <span>📷</span>
+            <span>Scan Gambar</span>
+          </button>
+          <button data-tab="edit" class="tab-btn border border-transparent py-2.5 px-2 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5">
+            <span>✏️</span>
+            <span>Atur Posisi</span>
+          </button>
+        </div>
+
+        <!-- ================================================================ -->
+        <!-- TAB 1: SOLVE & LEVEL (NEAT STEP-BY-STEP SOLVER CARD)             -->
+        <!-- ================================================================ -->
+        <div id="tabPanelSolve" class="flex flex-col gap-4">
+
+          <!-- Card: Multi-Solution Picker & Comparison -->
+          <div id="multiSolutionCard" class="hidden glass-panel rounded-3xl p-4 sm:p-5 space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex items-center gap-2.5">
+                <span class="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center text-sm font-bold">🏆</span>
+                <div>
+                  <h2 class="text-sm font-bold text-white leading-tight">Pilihan Solusi & Analisis Termudah</h2>
+                  <p id="multiSolutionSub" class="text-[11px] text-slate-400">Diurutkan dari yang paling mudah ditiru di HP</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <button id="btnToggleSafeZone" class="btn-glass active-emerald px-2.5 py-1 rounded-lg text-[11px] font-semibold">
+                  📐 Zona Aman
+                </button>
+                <button id="btnToggleAltPaths" class="btn-glass px-2.5 py-1 rounded-lg text-[11px] font-semibold text-slate-300">
+                  👻 Semua Jalur
+                </button>
+              </div>
+            </div>
+
+            <!-- Interactive Solution Cards Grid -->
+            <div id="solutionsListContainer" class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[260px] overflow-y-auto pr-0.5"></div>
+          </div>
+
+          <!-- Card: Structured Solution Guide & Ease Analysis -->
+          <div class="glass-panel rounded-3xl p-4 sm:p-5 space-y-4">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2.5">
+                <span class="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-300 flex items-center justify-center text-sm font-bold">🎯</span>
+                <div>
+                  <h2 class="text-sm font-bold text-white leading-tight">Ringkasan & Analisis Solusi Aktif</h2>
+                  <p class="text-[11px] text-slate-400">Panduan titik mulai, sudut bidik, & margin toleransi aman</p>
+                </div>
+              </div>
+              <span id="solutionBadge" class="text-[11px] font-bold px-3 py-1 rounded-full bg-slate-800 text-slate-300">Siap di-Solve</span>
+            </div>
+
+            <!-- Ease & Forgiveness Analysis Banner -->
+            <div id="easeAnalysisBox" class="hidden bg-gradient-to-br from-emerald-500/10 via-slate-900/75 to-sky-500/10 border border-emerald-400/25 rounded-2xl p-3.5 space-y-2.5">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <span id="easeTierBadge" class="text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-emerald-500/25 text-emerald-300">⭐ Sangat Mudah</span>
+                  <span id="easeScoreText" class="text-xs font-extrabold text-white font-mono">Skor 90/100</span>
+                </div>
+                <div class="flex items-center gap-3 text-[11px] font-mono">
+                  <span class="text-emerald-300" title="Seberapa lebar sudut meleset yang masih menang">Sudut: <strong id="easeAngleTol">±1.2°</strong></span>
+                  <span class="text-sky-300" title="Seberapa lebar geseran jari yang masih menang">Posisi: <strong id="easePosTol">±6px</strong></span>
+                </div>
+              </div>
+              <div class="w-full h-2 bg-slate-800/90 rounded-full overflow-hidden">
+                <div id="easeScoreBar" class="h-full bg-gradient-to-r from-emerald-400 to-sky-400 rounded-full transition-all duration-300" style="width: 0%"></div>
+              </div>
+              <p id="easeReasonText" class="text-[11px] sm:text-xs text-slate-200 leading-relaxed"></p>
+            </div>
+
+            <!-- Structured 3-Step Visual Summary -->
+            <div id="solutionStepsBox" class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div class="bg-slate-900/70 border border-white/10 rounded-2xl p-3">
+                <div class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-300 mb-1">
+                  <span class="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px]">1</span>
+                  Titik Mulai (X, Y)
+                </div>
+                <div id="metricStart" class="text-sm font-extrabold text-white font-mono">Belum ada</div>
+                <p class="text-[10px] text-slate-400 mt-0.5">Lingkaran hijau di kanvas</p>
+              </div>
+
+              <div class="bg-slate-900/70 border border-white/10 rounded-2xl p-3">
+                <div class="flex items-center gap-1.5 text-[11px] font-bold text-sky-300 mb-1">
+                  <span class="w-5 h-5 rounded-full bg-sky-500/20 flex items-center justify-center text-[10px]">2</span>
+                  Arah & Sudut
+                </div>
+                <div id="metricAngle" class="text-sm font-extrabold text-sky-300 font-mono">-</div>
+                <p id="metricCompass" class="text-[10px] text-slate-400 mt-0.5">Ikuti panah arah tembak</p>
+              </div>
+
+              <div class="bg-slate-900/70 border border-white/10 rounded-2xl p-3">
+                <div class="flex items-center gap-1.5 text-[11px] font-bold text-indigo-300 mb-1">
+                  <span class="w-5 h-5 rounded-full bg-indigo-500/20 flex items-center justify-center text-[10px]">3</span>
+                  Hasil Pantulan
+                </div>
+                <div id="metricHits" class="text-sm font-extrabold text-indigo-300 font-mono">-</div>
+                <p id="metricBounces" class="text-[10px] text-slate-400 mt-0.5">Total pantulan berantai</p>
+              </div>
+            </div>
+
+            <p id="solutionText" class="text-xs sm:text-sm text-slate-300 leading-relaxed bg-slate-900/40 border border-white/5 rounded-2xl p-3">
+              Klik <strong class="text-emerald-400">Auto Solve</strong> untuk mencari lintasan pemenang secara otomatis, atau geser langsung di papan untuk membidik manual. Gunakan <strong class="text-sky-300">Zoom In</strong> agar posisi titik mulai dan garis pantul terlihat sangat jelas!
+            </p>
+
+            <!-- Precision Shot Fine-Tuner -->
+            <div class="pt-3 border-t border-white/10 space-y-3">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                  <span>🎛️</span> Kalibrasi Tembakan Presisi (Live Preview)
+                </span>
+                <div class="flex items-center gap-1.5">
+                  <button id="btnAnalyzeFineTune" class="btn-glass px-2.5 py-1 rounded-lg text-[11px] font-semibold text-sky-300 disabled:opacity-40" disabled title="Ukur toleransi & pusatkan ke zona aman">
+                    📐 Analisis
+                  </button>
+                  <button id="btnFireFineTune" class="btn-glass active-emerald px-3 py-1 rounded-lg text-[11px] font-bold disabled:opacity-40" disabled>
+                    ▶ Tembakkan
+                  </button>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div>
+                  <div class="flex justify-between text-[11px] text-slate-300 mb-1">
+                    <span>Sensitivitas Deteksi</span>
+                    <span id="sensVal" class="font-mono text-emerald-300">36</span>
+                  </div>
+                  <input id="sliderSens" type="range" min="14" max="95" value="36" class="w-full h-1.5 bg-slate-700 rounded-lg cursor-pointer" />
+                </div>
+
+                <div>
+                  <div class="flex justify-between text-[11px] text-slate-300 mb-1">
+                    <span>Transparansi Foto Asli</span>
+                    <span id="overlayAlphaVal" class="font-mono text-emerald-300">35%</span>
+                  </div>
+                  <input id="sliderOverlayAlpha" type="range" min="0" max="85" value="35" class="w-full h-1.5 bg-slate-700 rounded-lg cursor-pointer" />
+                </div>
+              </div>
+
+              <div class="flex flex-wrap items-center justify-between gap-3 pt-1">
+                <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                  <input id="chkIgnoreBars" type="checkbox" checked class="rounded border-slate-600 bg-slate-800 text-emerald-500 focus:ring-0" />
+                  <span>Abaikan status bar atas & bawah HP (5%)</span>
+                </label>
+
+                <button id="btnRescan" class="btn-glass px-3 py-1.5 rounded-xl text-[11px] font-semibold text-sky-300">
+                  ↻ Scan Ulang
+                </button>
+              </div>
+            </div>
+
+            <!-- Ball Size Setting (helps match tight screenshot gaps!) -->
+            <div class="pt-3 border-t border-white/10">
+              <div class="flex justify-between text-[11px] text-slate-300 mb-1">
+                <span>Ukuran Bola Fisika (kecilkan jika celah balok sangat sempit)</span>
+                <span id="ballSizeVal" class="font-mono text-sky-300">5.5 px</span>
+              </div>
+              <input id="sliderBallSize" type="range" min="3.5" max="9.0" step="0.1" value="5.5" class="w-full h-1.5 bg-slate-700 rounded-lg cursor-pointer" />
+            </div>
+          </div>
+        </div>
+
+        <!-- ================================================================ -->
+        <!-- TAB 3: PRECISION POSITION & SHAPE EDITOR                         -->
+        <!-- ================================================================ -->
+        <div id="tabPanelEdit" class="hidden flex flex-col gap-4">
+          <div class="glass-panel rounded-3xl p-4 sm:p-5 space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 class="text-sm font-bold text-white flex items-center gap-2">
+                  <span class="w-7 h-7 rounded-xl bg-pink-500/20 text-pink-300 flex items-center justify-center text-xs">✏️</span>
+                  Editor Posisi & Bentuk Presisi
+                </h2>
+                <p class="text-[11px] text-slate-400 mt-0.5">Pilih balok di kanvas untuk geser, atau tarik titik hijau di atasnya untuk memutar</p>
+              </div>
+              <label class="flex items-center gap-2 bg-slate-900/70 border border-white/10 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-200 cursor-pointer">
+                <input id="chkSnapGrid" type="checkbox" class="rounded border-slate-600 bg-slate-800 text-emerald-500 focus:ring-0" />
+                <span>Snap Grid (5px)</span>
+              </label>
+            </div>
+
+            <!-- Add Shapes Palette -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <button id="btnAddRectTarget" class="btn-glass py-2 px-2.5 rounded-xl text-xs font-semibold text-white flex items-center justify-center gap-1.5">
+                <span class="w-3 h-3 bg-white rounded-[2px] inline-block"></span> + Kotak Putih
+              </button>
+              <button id="btnAddTriTarget" class="btn-glass py-2 px-2.5 rounded-xl text-xs font-semibold text-white flex items-center justify-center gap-1.5">
+                <span>◢</span> + Segitiga Putih
+              </button>
+              <button id="btnAddRectWall" class="btn-glass py-2 px-2.5 rounded-xl text-xs font-semibold text-slate-300 flex items-center justify-center gap-1.5">
+                <span class="w-3 h-3 bg-slate-950 border border-slate-400 rounded-[2px] inline-block"></span> + Dinding Hitam
+              </button>
+              <button id="btnAddTriWall" class="btn-glass py-2 px-2.5 rounded-xl text-xs font-semibold text-slate-300 flex items-center justify-center gap-1.5">
+                <span class="text-slate-400">◢</span> + Segitiga Hitam
+              </button>
+            </div>
+
+            <!-- Selected Shape Precision Inspector -->
+            <div id="selectedShapeInspector" class="bg-slate-900/65 border border-white/10 rounded-2xl p-3.5 space-y-3.5">
+              <div id="noSelectionMsg" class="text-center py-3 text-xs text-slate-400">
+                Belum ada bentuk terpilih. Masuk ke mode <strong class="text-pink-300">Edit Posisi</strong> di atas kanvas lalu ketuk salah satu bentuk untuk mengatur posisinya secara presisi.
+              </div>
+
+              <div id="activeSelectionControls" class="hidden space-y-3.5">
+                <div class="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-white/10">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs font-bold text-emerald-300" id="selShapeTitle">Bentuk #1</span>
+                    <span class="text-[11px] font-mono text-slate-400" id="selShapeCoords">X: 200, Y: 340</span>
+                  </div>
+                  <div class="flex items-center gap-1.5">
+                    <button id="btnFlipType" class="btn-glass px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white">⇄ Putih/Hitam</button>
+                    <button id="btnDuplicateShape" class="btn-glass px-2.5 py-1 rounded-lg text-[11px] font-semibold text-sky-300">⧉ Duplikat</button>
+                    <button id="btnDeleteShape" class="btn-glass px-2.5 py-1 rounded-lg text-[11px] font-semibold text-rose-300">🗑 Hapus</button>
+                  </div>
+                </div>
+
+                <!-- Precision D-Pad & Rotation/Scale -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                  <!-- D-Pad Nudge -->
+                  <div class="flex flex-col items-center gap-1.5 bg-slate-950/40 p-3 rounded-xl border border-white/5">
+                    <span class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Geser Halus (2px)</span>
+                    <button id="btnNudgeUp" class="btn-glass w-10 h-8 rounded-lg text-xs font-bold text-white">▲</button>
+                    <div class="flex items-center gap-1.5">
+                      <button id="btnNudgeLeft" class="btn-glass w-10 h-8 rounded-lg text-xs font-bold text-white">◀</button>
+                      <button id="btnCenterShape" class="btn-glass w-10 h-8 rounded-lg text-[10px] font-bold text-emerald-300" title="Tengah Kanvas">⊕</button>
+                      <button id="btnNudgeRight" class="btn-glass w-10 h-8 rounded-lg text-xs font-bold text-white">▶</button>
+                    </div>
+                    <button id="btnNudgeDown" class="btn-glass w-10 h-8 rounded-lg text-xs font-bold text-white">▼</button>
+                  </div>
+
+                  <!-- Rotate & Scale Controls -->
+                  <div class="space-y-2.5">
+                    <div>
+                      <span class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block mb-1.5">Putar Presisi</span>
+                      <div class="grid grid-cols-4 gap-1.5">
+                        <button id="btnRotM15" class="btn-glass py-1.5 rounded-lg text-[11px] font-bold text-white">-15°</button>
+                        <button id="btnRotM1" class="btn-glass py-1.5 rounded-lg text-[11px] font-bold text-white">-1°</button>
+                        <button id="btnRotP1" class="btn-glass py-1.5 rounded-lg text-[11px] font-bold text-white">+1°</button>
+                        <button id="btnRotP15" class="btn-glass py-1.5 rounded-lg text-[11px] font-bold text-white">+15°</button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <span class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block mb-1.5">Ukuran & Cermin</span>
+                      <div class="grid grid-cols-3 gap-1.5">
+                        <button id="btnScaleDown" class="btn-glass py-1.5 rounded-lg text-[11px] font-bold text-white">− Kecil</button>
+                        <button id="btnScaleUp" class="btn-glass py-1.5 rounded-lg text-[11px] font-bold text-white">+ Besar</button>
+                        <button id="btnMirrorX" class="btn-glass py-1.5 rounded-lg text-[11px] font-bold text-sky-300">⇆ Balik</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex justify-end">
+              <button id="btnClearAll" class="btn-glass px-3.5 py-2 rounded-xl text-xs font-semibold text-rose-300 hover:text-rose-200">
+                🗑 Bersihkan Semua Bentuk
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </section>
+    </main>
+  </div>
+
+  <!-- Non-blocking Toast Message -->
+  <div id="toast" class="hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 border border-white/15 text-white px-4 py-2.5 rounded-2xl shadow-2xl text-xs font-semibold max-w-[92vw] text-center"></div>
+
+  <script>
+    /**
+     * =========================================================================
+     * OKAY? SIMULATOR, CAMERA ZOOM/PAN, SHAPE EDITOR, CV DETECTOR & AUTO-SOLVER
+     * =========================================================================
+     */
+    (() => {
+      'use strict';
+
+      // =======================================================================
+      // 1. CONSTANTS & APPLICATION STATE
+      // =======================================================================
+      const LOGICAL_W = 400;
+      const LOGICAL_H = 680;
+      const BALL_SPEED_NORMAL = 640;
+      const MAX_BOUNCES = 120;
+      const EPS = 1e-4;
+      const GRID_STEP = 5;
+
+      const state = {
+        bgColor: '#3f4957',
+        ballRadius: 5.5,
+        shapes: [],              // { id, type: 'target'|'wall', vertices: [{x,y}], alive, flash }
+        particles: [],
+        impacts: [],             // Visual ripple rings on bounce
+
+        // Tool Mode: 'play' | 'pan' | 'edit'
+        toolMode: 'play',
+        showGrid: false,
+        showRuler: true,
+        snapToGrid: false,
+
+        // Camera (Zoom In / Zoom Out / Drag Pan)
+        cam: {
+          zoom: 1.0,
+          panX: 0,
+          panY: 0,
+          minZoom: 0.75,
+          maxZoom: 4.5
+        },
+
+        // Multi-touch & pointer tracking
+        activePointers: new Map(), // pointerId -> { clientX, clientY }
+        pinchStartDist: 0,
+        pinchStartZoom: 1,
+        pinchPrevMid: null,
+        isPanning: false,
+        panPrevClient: null,
+        spacePressed: false,
+
+        // Shape Editing State
+        selectedShapeId: null,
+        draggingShape: false,
+        rotatingShape: false,
+        dragStartLogical: null,
+        dragOriginalVerts: null,
+        rotCenter: null,
+        rotStartAngle: 0,
+        rotOriginalVerts: null,
+
+        // Manual Aiming State
+        aiming: false,
+        aimStart: { x: 0, y: 0 },
+        aimCurrent: { x: 0, y: 0 },
+
+        // Simulation Playback State
+        simPlaying: false,
+        simPath: null,
+        simSegmentIdx: 0,
+        simSegmentDist: 0,
+        simBallPos: null,
+        simTrail: [],
+        slowMo: false,
+        showGuide: true,
+        restoreTimer: null,
+        // Stored Solution / Fine-Tuned Shot
+        solutionShot: null,      // { sx, sy, angle, simResult, solved, analysis, badges }
+        solutions: [],           // Multi-solution ranked array
+        activeSolutionIdx: -1,
+        showSafeZone: true,      // Render visual tolerance cone & safe finger halo
+        showAltPaths: false,     // Ghost preview of alternative solutions
+        solving: false,
+        cancelSolveFlag: false,
+
+        // Uploaded Screenshot Calibration State
+        uploadedImage: null,
+        uploadedRect: { x: 0, y: 0, w: LOGICAL_W, h: LOGICAL_H },
+        showImageOverlay: true,
+        imageOverlayAlpha: 0.35,
+        detectSensitivity: 36,
+        ignoreStatusBars: true,
+        swapTargetWall: false,
+
+        // Audio
+        muted: false,
+        audioCtx: null,
+        hitCombo: 0,
+      };
+
+      let nextShapeId = 1;
+
+      // =======================================================================
+      // 2. DOM REFERENCES
+      // =======================================================================
+      const canvas = document.getElementById('gameCanvas');
+      const ctx = canvas.getContext('2d');
+      const procCanvas = document.getElementById('procCanvas');
+      const procCtx = procCanvas.getContext('2d', { willReadFrequently: true });
+      const stageContainer = document.getElementById('stageContainer');
+      const imageInput = document.getElementById('imageInput');
+      const dropZone = document.getElementById('dropZone');
+
+      const hudTargetCount = document.getElementById('hudTargetCount');
+      const hudZoomBadge = document.getElementById('hudZoomBadge');
+      const stageHintBadge = document.getElementById('stageHintBadge');
+      const solverOverlay = document.getElementById('solverOverlay');
+      const solverStatusTitle = document.getElementById('solverStatusTitle');
+      const solverStatusSub = document.getElementById('solverStatusSub');
+      const solverProgressBar = document.getElementById('solverProgressBar');
+      const winBanner = document.getElementById('winBanner');
+      const winBannerTitle = document.getElementById('winBannerTitle');
+      const winBannerSub = document.getElementById('winBannerSub');
+      const winBounceCount = document.getElementById('winBounceCount');
+
+      const toolPlay = document.getElementById('toolPlay');
+      const toolPan = document.getElementById('toolPan');
+      const toolEdit = document.getElementById('toolEdit');
+
+      const btnAutoSolve = document.getElementById('btnAutoSolve');
+      const btnCancelSolve = document.getElementById('btnCancelSolve');
+      const btnUploadQuick = document.getElementById('btnUploadQuick');
+      const btnReplay = document.getElementById('btnReplay');
+      const btnSlowMo = document.getElementById('btnSlowMo');
+      const slowMoLabel = document.getElementById('slowMoLabel');
+      const btnShowGuide = document.getElementById('btnShowGuide');
+      const btnFocusStart = document.getElementById('btnFocusStart');
+      const btnGridOverlay = document.getElementById('btnGridOverlay');
+      const btnMute = document.getElementById('btnMute');
+      const muteIcon = document.getElementById('muteIcon');
+      const btnResetBoard = document.getElementById('btnResetBoard');
+
+      const btnZoomIn = document.getElementById('btnZoomIn');
+      const btnZoomOut = document.getElementById('btnZoomOut');
+      const btnZoomReset = document.getElementById('btnZoomReset');
+
+      const multiSolutionCard = document.getElementById('multiSolutionCard');
+      const multiSolutionSub = document.getElementById('multiSolutionSub');
+      const solutionsListContainer = document.getElementById('solutionsListContainer');
+      const btnToggleSafeZone = document.getElementById('btnToggleSafeZone');
+      const btnToggleAltPaths = document.getElementById('btnToggleAltPaths');
+
+      const easeAnalysisBox = document.getElementById('easeAnalysisBox');
+      const easeTierBadge = document.getElementById('easeTierBadge');
+      const easeScoreText = document.getElementById('easeScoreText');
+      const easeAngleTol = document.getElementById('easeAngleTol');
+      const easePosTol = document.getElementById('easePosTol');
+      const easeScoreBar = document.getElementById('easeScoreBar');
+      const easeReasonText = document.getElementById('easeReasonText');
+
+      const solutionBadge = document.getElementById('solutionBadge');
+      const solutionText = document.getElementById('solutionText');
+      const metricStart = document.getElementById('metricStart');
+      const metricAngle = document.getElementById('metricAngle');
+      const metricCompass = document.getElementById('metricCompass');
+      const metricHits = document.getElementById('metricHits');
+      const metricBounces = document.getElementById('metricBounces');
+
+      const sliderFineX = document.getElementById('sliderFineX');
+      const sliderFineY = document.getElementById('sliderFineY');
+      const sliderFineAng = document.getElementById('sliderFineAng');
+      const fineXVal = document.getElementById('fineXVal');
+      const fineYVal = document.getElementById('fineYVal');
+      const fineAngVal = document.getElementById('fineAngVal');
+      const btnAnalyzeFineTune = document.getElementById('btnAnalyzeFineTune');
+      const btnFireFineTune = document.getElementById('btnFireFineTune');
+
+      const imageCalibrationPanel = document.getElementById('imageCalibrationPanel');
+      const detectSummary = document.getElementById('detectSummary');
+      const btnToggleOverlay = document.getElementById('btnToggleOverlay');
+      const btnSwapColors = document.getElementById('btnSwapColors');
+      const sliderSens = document.getElementById('sliderSens');
+      const sensVal = document.getElementById('sensVal');
+      const sliderOverlayAlpha = document.getElementById('sliderOverlayAlpha');
+      const overlayAlphaVal = document.getElementById('overlayAlphaVal');
+      const chkIgnoreBars = document.getElementById('chkIgnoreBars');
+      const sliderBallSize = document.getElementById('sliderBallSize');
+      const ballSizeVal = document.getElementById('ballSizeVal');
+
+      const chkSnapGrid = document.getElementById('chkSnapGrid');
+      const noSelectionMsg = document.getElementById('noSelectionMsg');
+      const activeSelectionControls = document.getElementById('activeSelectionControls');
+      const selShapeTitle = document.getElementById('selShapeTitle');
+      const selShapeCoords = document.getElementById('selShapeCoords');
+
+      const toastEl = document.getElementById('toast');
+
+      // =======================================================================
+      // 3. AUDIO SYNTH (KALIMBA)
+      // =======================================================================
+      const PENTATONIC_HZ = [
+        261.63, 293.66, 329.63, 392.00, 440.00,
+        523.25, 587.33, 659.25, 783.99, 880.00,
+        1046.50, 1174.66, 1318.51
+      ];
+
+      function ensureAudio() {
+        if (state.muted) return null;
+        if (!state.audioCtx) {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (AudioCtx) state.audioCtx = new AudioCtx();
+        }
+        if (state.audioCtx && state.audioCtx.state === 'suspended') {
+          state.audioCtx.resume().catch(() => {});
+        }
+        return state.audioCtx;
+      }
+
+      function playTargetNote(comboIndex) {
+        const ac = ensureAudio();
+        if (!ac) return;
+        const now = ac.currentTime;
+        const freq = PENTATONIC_HZ[comboIndex % PENTATONIC_HZ.length];
+
+        const osc = ac.createOscillator();
+        const over = ac.createOscillator();
+        const gain = ac.createGain();
+        const overGain = ac.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now);
+        over.type = 'triangle';
+        over.frequency.setValueAtTime(freq * 2, now);
+
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.exponentialRampToValueAtTime(0.22, now + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0008, now + 0.52);
+
+        overGain.gain.setValueAtTime(0.001, now);
+        overGain.gain.exponentialRampToValueAtTime(0.045, now + 0.01);
+        overGain.gain.exponentialRampToValueAtTime(0.0005, now + 0.2);
+
+        osc.connect(gain);
+        over.connect(overGain);
+        gain.connect(ac.destination);
+        overGain.connect(ac.destination);
+
+        osc.start(now);
+        over.start(now);
+        osc.stop(now + 0.55);
+        over.stop(now + 0.22);
+      }
+
+      function playWallThud() {
+        const ac = ensureAudio();
+        if (!ac) return;
+        const now = ac.currentTime;
+        const osc = ac.createOscillator();
+        const gain = ac.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(140, now);
+        osc.frequency.exponentialRampToValueAtTime(58, now + 0.08);
+        gain.gain.setValueAtTime(0.14, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+        osc.connect(gain);
+        gain.connect(ac.destination);
+        osc.start(now);
+        osc.stop(now + 0.1);
+      }
+
+      function playWinChord() {
+        const ac = ensureAudio();
+        if (!ac) return;
+        [523.25, 659.25, 783.99, 1046.5].forEach((freq, i) => {
+          const now = ac.currentTime + i * 0.055;
+          const osc = ac.createOscillator();
+          const gain = ac.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now);
+          gain.gain.setValueAtTime(0.001, now);
+          gain.gain.exponentialRampToValueAtTime(0.13, now + 0.015);
+          gain.gain.exponentialRampToValueAtTime(0.0008, now + 0.65);
+          osc.connect(gain);
+          gain.connect(ac.destination);
+          osc.start(now);
+          osc.stop(now + 0.68);
+        });
+      }
+
+      // =======================================================================
+      // 4. CAMERA (ZOOM IN / ZOOM OUT / SMOOTH DRAG PAN)
+      // =======================================================================
+
+      function clampCamera() {
+        const c = state.cam;
+        c.zoom = Math.max(c.minZoom, Math.min(c.maxZoom, c.zoom));
+        const maxPanX = LOGICAL_W * c.zoom * 0.65;
+        const maxPanY = LOGICAL_H * c.zoom * 0.65;
+        c.panX = Math.max(-maxPanX, Math.min(maxPanX, c.panX));
+        c.panY = Math.max(-maxPanY, Math.min(maxPanY, c.panY));
+        hudZoomBadge.textContent = `${Math.round(c.zoom * 100)}%`;
+      }
+
+      function clientToStageUnzoomed(clientX, clientY) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: ((clientX - rect.left) / rect.width) * LOGICAL_W,
+          y: ((clientY - rect.top) / rect.height) * LOGICAL_H
+        };
+      }
+
+      function clientToLogical(clientX, clientY) {
+        const s = clientToStageUnzoomed(clientX, clientY);
+        const c = state.cam;
+        return {
+          x: (s.x - LOGICAL_W * 0.5 - c.panX) / c.zoom + LOGICAL_W * 0.5,
+          y: (s.y - LOGICAL_H * 0.5 - c.panY) / c.zoom + LOGICAL_H * 0.5
+        };
+      }
+
+      function zoomAtStagePoint(newZoom, stageX, stageY) {
+        const c = state.cam;
+        const clampedZoom = Math.max(c.minZoom, Math.min(c.maxZoom, newZoom));
+        // Logical coordinate currently under (stageX, stageY)
+        const lx = (stageX - LOGICAL_W * 0.5 - c.panX) / c.zoom + LOGICAL_W * 0.5;
+        const ly = (stageY - LOGICAL_H * 0.5 - c.panY) / c.zoom + LOGICAL_H * 0.5;
+        c.zoom = clampedZoom;
+        c.panX = stageX - LOGICAL_W * 0.5 - (lx - LOGICAL_W * 0.5) * c.zoom;
+        c.panY = stageY - LOGICAL_H * 0.5 - (ly - LOGICAL_H * 0.5) * c.zoom;
+        clampCamera();
+      }
+
+      function resetCamera() {
+        state.cam.zoom = 1.0;
+        state.cam.panX = 0;
+        state.cam.panY = 0;
+        clampCamera();
+      }
+
+      /**
+       * Smoothly focuses & zooms the viewport directly onto the active solution's
+       * starting point and initial aiming arrow for crystal-clear inspection.
+       */
+      function focusCameraOnSolutionStart() {
+        if (!state.solutionShot) return;
+        const sol = state.solutionShot;
+        const focusX = sol.sx + Math.cos(sol.angle) * 28;
+        const focusY = sol.sy + Math.sin(sol.angle) * 28;
+        const targetZoom = 2.15;
+        state.cam.zoom = targetZoom;
+        state.cam.panX = -(focusX - LOGICAL_W * 0.5) * targetZoom;
+        state.cam.panY = -(focusY - LOGICAL_H * 0.5) * targetZoom;
+        clampCamera();
+        showToast('Zoom difokuskan ke titik mulai & arah tembak.');
+      }
+
+      // =======================================================================
+      // 5. GEOMETRY HELPERS & PRESET LEVELS
+      // =======================================================================
+
+      function makeRectShape(cx, cy, w, h, angleDeg = 0, type = 'target') {
+        const rad = (angleDeg * Math.PI) / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        const hw = w * 0.5;
+        const hh = h * 0.5;
+        const local = [
+          { x: -hw, y: -hh },
+          { x: hw, y: -hh },
+          { x: hw, y: hh },
+          { x: -hw, y: hh }
+        ];
+        return {
+          id: nextShapeId++,
+          type,
+          vertices: local.map(p => ({
+            x: cx + p.x * cos - p.y * sin,
+            y: cy + p.x * sin + p.y * cos
+          })),
+          alive: true,
+          flash: 0
+        };
+      }
+
+      /**
+       * Creates a crisp right triangle with right angle at bottom-right (◢).
+       */
+      function makeRightTriangle(x, y, size, type = 'target') {
+        return {
+          id: nextShapeId++,
+          type,
+          vertices: [
+            { x: x + size, y: y },
+            { x: x + size, y: y + size },
+            { x: x, y: y + size }
+          ],
+          alive: true,
+          flash: 0
+        };
+      }
+
+      function polygonCentroid(verts) {
+        let sx = 0, sy = 0;
+        const n = verts.length || 1;
+        for (let i = 0; i < verts.length; i++) {
+          sx += verts[i].x;
+          sy += verts[i].y;
+        }
+        return { x: sx / n, y: sy / n };
+      }
+
+      function polygonBounds(verts) {
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const v of verts) {
+          if (v.x < minX) minX = v.x;
+          if (v.x > maxX) maxX = v.x;
+          if (v.y < minY) minY = v.y;
+          if (v.y > maxY) maxY = v.y;
+        }
+        return { minX, maxX, minY, maxY };
+      }
+
+      function pointInPolygon(px, py, verts) {
+        let inside = false;
+        for (let i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+          const xi = verts[i].x, yi = verts[i].y;
+          const xj = verts[j].x, yj = verts[j].y;
+          const intersect = ((yi > py) !== (yj > py)) &&
+            (px < ((xj - xi) * (py - yi)) / (yj - yi + 1e-12) + xi);
+          if (intersect) inside = !inside;
+        }
+        return inside;
+      }
+
+      function distPointToSegmentSq(px, py, ax, ay, bx, by) {
+        const vx = bx - ax, vy = by - ay;
+        const wx = px - ax, wy = py - ay;
+        const c1 = wx * vx + wy * vy;
+        if (c1 <= 0) return wx * wx + wy * wy;
+        const c2 = vx * vx + vy * vy;
+        if (c2 <= c1) {
+          const dx = px - bx, dy = py - by;
+          return dx * dx + dy * dy;
+        }
+        const t = c1 / c2;
+        const projX = ax + t * vx, projY = ay + t * vy;
+        const dx = px - projX, dy = py - projY;
+        return dx * dx + dy * dy;
+      }
+
+      function translateShape(shape, dx, dy) {
+        for (const v of shape.vertices) {
+          v.x += dx;
+          v.y += dy;
+        }
+      }
+
+      function rotateShape(shape, angleDeg) {
+        const c = polygonCentroid(shape.vertices);
+        const rad = (angleDeg * Math.PI) / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        shape.vertices = shape.vertices.map(v => {
+          const rx = v.x - c.x;
+          const ry = v.y - c.y;
+          return {
+            x: c.x + rx * cos - ry * sin,
+            y: c.y + rx * sin + ry * cos
+          };
+        });
+      }
+
+      function scaleShape(shape, factor) {
+        const c = polygonCentroid(shape.vertices);
+        const b = polygonBounds(shape.vertices);
+        const curSize = Math.max(b.maxX - b.minX, b.maxY - b.minY);
+        if ((factor < 1 && curSize < 14) || (factor > 1 && curSize > 340)) return;
+        shape.vertices = shape.vertices.map(v => ({
+          x: c.x + (v.x - c.x) * factor,
+          y: c.y + (v.y - c.y) * factor
+        }));
+      }
+
+      function mirrorShapeX(shape) {
+        const c = polygonCentroid(shape.vertices);
+        shape.vertices = shape.vertices.map(v => ({
+          x: c.x - (v.x - c.x),
+          y: v.y
+        })).reverse();
+      }
+
+      const PRESETS = {
+        triangles4x5: {
+          name: 'Grid Segitiga 4×5',
+          bgColor: '#3f4957',
+          ballRadius: 4.8,
+          build() {
+            const shapes = [];
+            const size = 50;
+            const gap = 12;
+            const cols = 4, rows = 5;
+            const totalW = cols * size + (cols - 1) * gap;
+            const totalH = rows * size + (rows - 1) * gap;
+            const startX = (LOGICAL_W - totalW) * 0.5;
+            const startY = (LOGICAL_H - totalH) * 0.5 - 12;
+            const wallSet = new Set(['0,0', '0,2', '3,0', '4,3']);
+
+            for (let r = 0; r < rows; r++) {
+              for (let c = 0; c < cols; c++) {
+                const x = startX + c * (size + gap);
+                const y = startY + r * (size + gap);
+                const type = wallSet.has(`${r},${c}`) ? 'wall' : 'target';
+                shapes.push(makeRightTriangle(x, y, size, type));
+              }
+            }
+            return shapes;
+          }
+        },
+        level30: {
+          name: 'Level 30 (Lorong 2 Garis)',
+          bgColor: '#3f4957',
+          ballRadius: 5.5,
+          build() {
+            return [
+              // Two black vertical corridor bars (right-lower side)
+              makeRectShape(258, 388, 13, 132, 0, 'wall'),
+              makeRectShape(296, 388, 13, 132, 0, 'wall'),
+              // 1. Top-right tilted white block (reflects vertical shot down-left)
+              makeRectShape(288, 224, 58, 86, 24, 'target'),
+              // 2. Middle-right vertical white block
+              makeRectShape(210, 355, 40, 56, 0, 'target'),
+              // 3. Thin tilted white bar below top-left square
+              makeRectShape(166, 275, 72, 20, -20, 'target'),
+              // 4. Middle-left horizontal white block
+              makeRectShape(154, 358, 56, 42, 0, 'target'),
+              // 5. Top-left slightly tilted square
+              makeRectShape(160, 214, 64, 58, -10, 'target'),
+              // 6. Bottom-middle tilted white bar
+              makeRectShape(206, 436, 78, 20, -52, 'target'),
+              // 7. Bottom-left diagonal white bar
+              makeRectShape(110, 422, 104, 28, 45, 'target')
+            ];
+          }
+        },
+        level1: {
+          name: 'Level 1 (Zig-Zag Dasar)',
+          bgColor: '#434d5c',
+          ballRadius: 5.5,
+          build() {
+            return [
+              makeRectShape(125, 250, 96, 24, -45, 'target'),
+              makeRectShape(275, 250, 96, 24, 45, 'target'),
+              makeRectShape(200, 425, 110, 24, 0, 'target')
+            ];
+          }
+        },
+        level14: {
+          name: 'Level 14 (Pantulan Hitam)',
+          bgColor: '#3a4454',
+          ballRadius: 5.5,
+          build() {
+            return [
+              makeRectShape(96, 330, 18, 210, 0, 'wall'),
+              makeRectShape(304, 330, 18, 210, 0, 'wall'),
+              makeRectShape(200, 210, 82, 24, 0, 'target'),
+              makeRectShape(156, 305, 58, 22, -25, 'target'),
+              makeRectShape(244, 365, 58, 22, 25, 'target'),
+              makeRectShape(200, 455, 86, 24, 0, 'target')
+            ];
+          }
+        },
+        level24: {
+          name: 'Level 24 (Berlian 5 Balok)',
+          bgColor: '#364152',
+          ballRadius: 5.5,
+          build() {
+            return [
+              makeRectShape(200, 195, 72, 22, 0, 'target'),
+              makeRectShape(118, 305, 72, 22, -55, 'target'),
+              makeRectShape(282, 305, 72, 22, 55, 'target'),
+              makeRectShape(146, 430, 74, 22, 32, 'target'),
+              makeRectShape(254, 430, 74, 22, -32, 'target'),
+              makeRectShape(200, 325, 44, 44, 45, 'wall')
+            ];
+          }
+        }
+      };
+
+      // =======================================================================
+      // 6. CONTINUOUS SWEPT-CIRCLE PHYSICS ENGINE
+      // =======================================================================
+
+      function isPointClearOfShapes(px, py, shapes, radius) {
+        const rSq = (radius + 0.35) * (radius + 0.35);
+        for (const s of shapes) {
+          if (s.alive === false) continue;
+          const verts = s.vertices;
+          if (pointInPolygon(px, py, verts)) return false;
+          for (let i = 0; i < verts.length; i++) {
+            const a = verts[i];
+            const b = verts[(i + 1) % verts.length];
+            if (distPointToSegmentSq(px, py, a.x, a.y, b.x, b.y) < rSq) return false;
+          }
+        }
+        return true;
+      }
+
+      /**
+       * Exact swept-circle collision test against a line segment + its two endpoints.
+       * Returns { t, nx, ny } or null.
+       */
+      function rayCircleVsSegment(ox, oy, dx, dy, ax, ay, bx, by, R) {
+        let bestT = Infinity;
+        let bestNx = 0, bestNy = 0;
+
+        // 1. Segment body
+        const ex = bx - ax, ey = by - ay;
+        const len = Math.hypot(ex, ey);
+        if (len > 1e-6) {
+          const tx = ex / len, ty = ey / len;
+          let nx = -ty, ny = tx;
+          let denom = dx * nx + dy * ny;
+          if (denom > 0) {
+            nx = -nx;
+            ny = -ny;
+            denom = -denom;
+          }
+          if (denom < -1e-8) {
+            const dist = (ox - ax) * nx + (oy - ay) * ny;
+            if (dist >= R - 0.05) {
+              const t = (R - dist) / denom;
+              if (t > EPS && t < bestT) {
+                const hx = ox + dx * t;
+                const hy = oy + dy * t;
+                const proj = (hx - ax) * tx + (hy - ay) * ty;
+                if (proj >= -1e-4 && proj <= len + 1e-4) {
+                  bestT = t;
+                  bestNx = nx;
+                  bestNy = ny;
+                }
+              }
+            }
+          }
+        }
+
+        // 2. Endpoint circles (handles sharp corners smoothly)
+        const endpoints = [[ax, ay], [bx, by]];
+        const rSq = R * R;
+        for (let k = 0; k < 2; k++) {
+          const vx = endpoints[k][0], vy = endpoints[k][1];
+          const fx = ox - vx, fy = oy - vy;
+          const bDot = fx * dx + fy * dy;
+          if (bDot >= 0) continue; // Moving away
+          const c = fx * fx + fy * fy - rSq;
+          const disc = bDot * bDot - c;
+          if (disc < 0) continue;
+          const t = -bDot - Math.sqrt(disc);
+          if (t > EPS && t < bestT) {
+            const hx = ox + dx * t;
+            const hy = oy + dy * t;
+            const nx = (hx - vx) / R;
+            const ny = (hy - vy) / R;
+            if (dx * nx + dy * ny < -1e-6) {
+              bestT = t;
+              bestNx = nx;
+              bestNy = ny;
+            }
+          }
+        }
+
+        return bestT < Infinity ? { t: bestT, nx: bestNx, ny: bestNy } : null;
+      }
+
+      function castCircleAgainstShapes(ox, oy, dx, dy, shapes, aliveArr, radius) {
+        let best = null;
+        let bestT = Infinity;
+
+        for (let sIdx = 0; sIdx < shapes.length; sIdx++) {
+          if (aliveArr ? !aliveArr[sIdx] : shapes[sIdx].alive === false) continue;
+          const verts = shapes[sIdx].vertices;
+          const n = verts.length;
+
+          for (let i = 0; i < n; i++) {
+            const a = verts[i];
+            const b = verts[(i + 1) % n];
+            const hit = rayCircleVsSegment(ox, oy, dx, dy, a.x, a.y, b.x, b.y, radius);
+            if (hit && hit.t < bestT) {
+              bestT = hit.t;
+              best = {
+                t: hit.t,
+                nx: hit.nx,
+                ny: hit.ny,
+                shapeIdx: sIdx,
+                shape: shapes[sIdx]
+              };
+            }
+          }
+        }
+        return best;
+      }
+
+      function computeExitDist(ox, oy, dx, dy) {
+        const margin = 24;
+        let tMax = 1200;
+        if (dx > 1e-7) tMax = Math.min(tMax, (LOGICAL_W + margin - ox) / dx);
+        else if (dx < -1e-7) tMax = Math.min(tMax, (-margin - ox) / dx);
+        if (dy > 1e-7) tMax = Math.min(tMax, (LOGICAL_H + margin - oy) / dy);
+        else if (dy < -1e-7) tMax = Math.min(tMax, (-margin - oy) / dy);
+        return Math.max(0, tMax);
+      }
+
+      /**
+       * Runs a deterministic full continuous-collision simulation for a single shot.
+       */
+      function simulateShot(sx, sy, angle, shapes, fastMode = false) {
+        const R = state.ballRadius;
+        const alive = new Uint8Array(shapes.length);
+        let totalTargets = 0;
+        for (let i = 0; i < shapes.length; i++) {
+          alive[i] = 1;
+          if (shapes[i].type === 'target') totalTargets++;
+        }
+
+        let ox = sx, oy = sy;
+        let dx = Math.cos(angle), dy = Math.sin(angle);
+        const points = [{ x: ox, y: oy }];
+        const hitEvents = [];
+        let targetsHit = 0;
+        let bounces = 0;
+        let wallStreak = 0;
+        let postWinSteps = 0;
+
+        for (let step = 0; step < MAX_BOUNCES; step++) {
+          const exitT = computeExitDist(ox, oy, dx, dy);
+          const hit = castCircleAgainstShapes(ox, oy, dx, dy, shapes, alive, R);
+
+          if (!hit || hit.t > exitT) {
+            points.push({ x: ox + dx * exitT, y: oy + dy * exitT });
+            break;
+          }
+
+          const hitX = ox + dx * hit.t;
+          const hitY = oy + dy * hit.t;
+          points.push({ x: hitX, y: hitY });
+          bounces++;
+
+          hitEvents.push({
+            pointIdx: points.length - 1,
+            shapeId: hit.shape.id,
+            hitX,
+            hitY,
+            type: hit.shape.type
+          });
+
+          if (hit.shape.type === 'target') {
+            alive[hit.shapeIdx] = 0;
+            targetsHit++;
+            wallStreak = 0;
+          } else {
+            wallStreak++;
+            if (wallStreak > 24) break; // Prevent infinite wall traps
+          }
+
+          // Reflect velocity cleanly and normalize to avoid drift
+          const dot = dx * hit.nx + dy * hit.ny;
+          dx = dx - 2 * dot * hit.nx;
+          dy = dy - 2 * dot * hit.ny;
+          const mag = Math.hypot(dx, dy) || 1;
+          dx /= mag;
+          dy /= mag;
+
+          // Tiny normal offset prevents immediate re-intersection on the same surface
+          ox = hitX + hit.nx * 0.06;
+          oy = hitY + hit.ny * 0.06;
+
+          // If all targets are cleared, let ball continue briefly for clean exit
+          if (targetsHit === totalTargets && totalTargets > 0) {
+            if (fastMode) break;
+            postWinSteps++;
+            if (postWinSteps >= 3) {
+              const remExit = computeExitDist(ox, oy, dx, dy);
+              points.push({ x: ox + dx * Math.min(remExit, 180), y: oy + dy * Math.min(remExit, 180) });
+              break;
+            }
+          }
+        }
+
+        const solved = totalTargets > 0 && targetsHit === totalTargets;
+
+        // Smooth heuristic score for solver optimization
+        let proximityBonus = 0;
+        if (!solved && totalTargets > 0) {
+          const lastPt = points[points.length - 1];
+          let minD = Infinity;
+          for (let i = 0; i < shapes.length; i++) {
+            if (alive[i] && shapes[i].type === 'target') {
+              const c = polygonCentroid(shapes[i].vertices);
+              const d = Math.hypot(lastPt.x - c.x, lastPt.y - c.y);
+              if (d < minD) minD = d;
+            }
+          }
+          if (minD < Infinity) proximityBonus = Math.max(0, 400 - minD);
+        }
+
+        const score =
+          (solved ? 500000 : 0) +
+          targetsHit * 10000 +
+          proximityBonus -
+          bounces * 12 -
+          (wallStreak > 12 ? 400 : 0);
+
+        return {
+          sx,
+          sy,
+          angle,
+          points,
+          hitEvents,
+          targetsHit,
+          totalTargets,
+          bounces,
+          solved,
+          score
+        };
+      }
+
+      // =======================================================================
+      // 7. UPGRADED MULTI-SOLUTION AUTO-SOLVER & EASE/STABILITY ANALYZER
+      // =======================================================================
+
+      /**
+       * Computes a signature describing the trajectory family so we can gather
+       * genuinely distinct solutions rather than near-duplicates 0.2° apart.
+       */
+      function getSolutionSignature(sim) {
+        const firstHits = sim.hitEvents.slice(0, 3).map(e => e.shapeId).join('-');
+        const angBucket = Math.round(((((sim.angle * 180) / Math.PI) % 360 + 360) % 360) / 14);
+        const posBucket = `${Math.round(sim.sx / 55)}_${Math.round(sim.sy / 55)}`;
+        return `${firstHits}|${angBucket}|${posBucket}`;
+      }
+
+      /**
+       * Measures real-world finger & aiming forgiveness for a shot, then RE-CENTERS
+       * the shot directly into the midpoint of its safe angle & position window so
+       * the player gets the widest possible margin of error on a real phone.
+       */
+      function analyzeAndCenterSolution(sim, shapes) {
+        let sx = sim.sx;
+        let sy = sim.sy;
+        let angle = sim.angle;
+        const requireSolved = sim.solved;
+        const minHits = sim.targetsHit;
+
+        const isStillGood = (testSim) => {
+          return requireSolved ? testSim.solved : testSim.targetsHit >= minHits;
+        };
+
+        // 1. Measure angular tolerance window (up to ±6.0° in 0.12° steps)
+        const angStep = (0.12 * Math.PI) / 180;
+        const maxAngSteps = 50;
+        let negAngSteps = 0;
+        for (let k = 1; k <= maxAngSteps; k++) {
+          if (isStillGood(simulateShot(sx, sy, angle - k * angStep, shapes, false))) negAngSteps = k;
+          else break;
+        }
+        let posAngSteps = 0;
+        for (let k = 1; k <= maxAngSteps; k++) {
+          if (isStillGood(simulateShot(sx, sy, angle + k * angStep, shapes, false))) posAngSteps = k;
+          else break;
+        }
+
+        // Re-center angle at exact midpoint of the safe cone!
+        const centeredAngle = angle + ((posAngSteps - negAngSteps) * 0.5) * angStep;
+        const verifyCenteredAng = simulateShot(sx, sy, centeredAngle, shapes, false);
+        if (isStillGood(verifyCenteredAng)) {
+          angle = centeredAngle;
+        }
+        const angleTolDeg = Math.max(0.05, ((negAngSteps + posAngSteps) * 0.5) * 0.12);
+
+        // 2. Measure perpendicular finger-placement tolerance (up to ±20px in 1.0px steps)
+        const perpX = -Math.sin(angle);
+        const perpY = Math.cos(angle);
+        const posStep = 1.0;
+        const maxPosSteps = 20;
+        let negPosSteps = 0;
+        for (let k = 1; k <= maxPosSteps; k++) {
+          const tx = sx - perpX * (k * posStep);
+          const ty = sy - perpY * (k * posStep);
+          if (tx < 8 || tx > LOGICAL_W - 8 || ty < 8 || ty > LOGICAL_H - 8) break;
+          if (!isPointClearOfShapes(tx, ty, shapes, state.ballRadius)) break;
+          if (isStillGood(simulateShot(tx, ty, angle, shapes, false))) negPosSteps = k;
+          else break;
+        }
+        let posPosSteps = 0;
+        for (let k = 1; k <= maxPosSteps; k++) {
+          const tx = sx + perpX * (k * posStep);
+          const ty = sy + perpY * (k * posStep);
+          if (tx < 8 || tx > LOGICAL_W - 8 || ty < 8 || ty > LOGICAL_H - 8) break;
+          if (!isPointClearOfShapes(tx, ty, shapes, state.ballRadius)) break;
+          if (isStillGood(simulateShot(tx, ty, angle, shapes, false))) posPosSteps = k;
+          else break;
+        }
+
+        // Re-center spawn point at midpoint of safe corridor!
+        const shiftPerp = ((posPosSteps - negPosSteps) * 0.5) * posStep;
+        const centeredSx = sx + perpX * shiftPerp;
+        const centeredSy = sy + perpY * shiftPerp;
+        let finalSim = simulateShot(sx, sy, angle, shapes, false);
+        if (isPointClearOfShapes(centeredSx, centeredSy, shapes, state.ballRadius)) {
+          const centeredSim = simulateShot(centeredSx, centeredSy, angle, shapes, false);
+          if (isStillGood(centeredSim)) {
+            sx = centeredSx;
+            sy = centeredSy;
+            finalSim = centeredSim;
+          }
+        }
+        const posTolPx = Math.max(0.5, ((negPosSteps + posPosSteps) * 0.5) * posStep);
+
+        // 3. Measure spawn clearance (how open & easy to tap the start spot is)
+        let nearestDistSq = Infinity;
+        for (const sh of shapes) {
+          for (let i = 0; i < sh.vertices.length; i++) {
+            const a = sh.vertices[i];
+            const b = sh.vertices[(i + 1) % sh.vertices.length];
+            const dSq = distPointToSegmentSq(sx, sy, a.x, a.y, b.x, b.y);
+            if (dSq < nearestDistSq) nearestDistSq = dSq;
+          }
+        }
+        const spawnClearance = Math.min(80, Math.sqrt(nearestDistSq));
+
+        // 4. Measure visual aiming alignment (straight vertical/horizontal or crisp 45° diagonal)
+        const deg = (((angle * 180) / Math.PI) % 360 + 360) % 360;
+        const distTo90 = Math.min(deg % 90, 90 - (deg % 90));
+        const distTo45 = Math.min(deg % 45, 45 - (deg % 45));
+        const isStraight = distTo90 <= 3.5;
+        const isDiagonal45 = !isStraight && distTo45 <= 3.5;
+
+        // 5. Compute Weighted Ease Score (0–100)
+        // Angle forgiveness (40 pts) + Position forgiveness (28 pts) + Open spawn (12 pts) +
+        // Visual alignment (10 pts) + Low extra bounces (10 pts)
+        const angScore = Math.min(40, (Math.log1p(angleTolDeg * 2.2) / Math.log1p(9)) * 40);
+        const posScore = Math.min(28, (Math.log1p(posTolPx * 0.7) / Math.log1p(12)) * 28);
+        const clearScore = Math.min(12, (spawnClearance / 45) * 12);
+        const alignScore = isStraight ? 10 : (isDiagonal45 ? 7 : Math.max(0, 4 - distTo45 * 0.18));
+        const extraBounces = Math.max(0, finalSim.bounces - finalSim.totalTargets);
+        const bounceScore = Math.max(0, 10 - extraBounces * 1.1);
+
+        let easeScore = Math.round(angScore + posScore + clearScore + alignScore + bounceScore);
+        if (!finalSim.solved) {
+          easeScore = Math.min(55, Math.round(easeScore * (finalSim.targetsHit / Math.max(1, finalSim.totalTargets))));
+        }
+        easeScore = Math.max(5, Math.min(99, easeScore));
+
+        let tierLabel = 'Presisi Tinggi';
+        let tierClass = 'bg-rose-500/20 text-rose-300 border border-rose-400/30';
+        if (easeScore >= 78) {
+          tierLabel = 'Sangat Mudah';
+          tierClass = 'bg-emerald-500/25 text-emerald-300 border border-emerald-400/35';
+        } else if (easeScore >= 60) {
+          tierLabel = 'Mudah';
+          tierClass = 'bg-sky-500/20 text-sky-300 border border-sky-400/35';
+        } else if (easeScore >= 42) {
+          tierLabel = 'Sedang';
+          tierClass = 'bg-amber-500/20 text-amber-300 border border-amber-400/35';
+        }
+
+        // Build clear, helpful Indonesian analysis reason
+        const hints = [];
+        if (isStraight) hints.push('arah tembakan nyaris lurus vertikal/horizontal sehingga mudah dibidik mata');
+        else if (isDiagonal45) hints.push('menggunakan sudut diagonal 45° yang rapi');
+        if (angleTolDeg >= 1.0) hints.push(`toleransi meleset sudut lebar (±${angleTolDeg.toFixed(2)}°)`);
+        else if (angleTolDeg >= 0.4) hints.push(`toleransi sudut cukup aman (±${angleTolDeg.toFixed(2)}°)`);
+        else hints.push(`butuh tarikan garis yang stabil (±${angleTolDeg.toFixed(2)}°)`);
+        if (posTolPx >= 5) hints.push(`ruang posisi jari longgar (±${posTolPx.toFixed(1)} px)`);
+        if (spawnClearance >= 26) hints.push('titik sentuh awal berada di ruang terbuka');
+
+        const reasonText = finalSim.solved
+          ? `Tembakan sudah dipusatkan di tengah zona aman: ${hints.join(', ')}.`
+          : `Solusi parsial (${finalSim.targetsHit}/${finalSim.totalTargets} target). Geser sedikit di Kalibrasi Presisi atau sesuaikan balok di tab Atur Posisi.`;
+
+        return {
+          sx,
+          sy,
+          angle,
+          simResult: finalSim,
+          solved: finalSim.solved,
+          analysis: {
+            easeScore,
+            angleTolDeg,
+            posTolPx,
+            spawnClearance,
+            isStraight,
+            isDiagonal45,
+            tierLabel,
+            tierClass,
+            reasonText
+          },
+          badges: []
+        };
+      }
+
+      function findComfortableSpawn(hitX, hitY, angleRad, shapes) {
+        const R = state.ballRadius;
+        const backDx = -Math.cos(angleRad);
+        const backDy = -Math.sin(angleRad);
+        // Step back slightly before casting so the ray never self-intersects the target edge
+        const startX = hitX + backDx * 0.6;
+        const startY = hitY + backDy * 0.6;
+        const backHit = castCircleAgainstShapes(startX, startY, backDx, backDy, shapes, null, R + 0.12);
+
+        const pad = 22;
+        let tMargin = 500;
+        if (backDx > 1e-6) tMargin = Math.min(tMargin, (LOGICAL_W - pad - startX) / backDx);
+        else if (backDx < -1e-6) tMargin = Math.min(tMargin, (pad - startX) / backDx);
+        if (backDy > 1e-6) tMargin = Math.min(tMargin, (LOGICAL_H - pad - startY) / backDy);
+        else if (backDy < -1e-6) tMargin = Math.min(tMargin, (pad - startY) / backDy);
+
+        const maxClear = Math.min(backHit ? backHit.t - 1.2 : 500, tMargin);
+        if (maxClear < 2.0) return null;
+
+        const preferred = maxClear > 200 ? Math.min(maxClear * 0.68, 220) : maxClear * 0.55;
+        const candX = startX + backDx * preferred;
+        const candY = startY + backDy * preferred;
+
+        if (candX >= 10 && candX <= LOGICAL_W - 10 && candY >= 10 && candY <= LOGICAL_H - 10 &&
+            isPointClearOfShapes(candX, candY, shapes, R)) {
+          return { x: candX, y: candY };
+        }
+        const mid = maxClear * 0.5;
+        const mx = startX + backDx * mid;
+        const my = startY + backDy * mid;
+        if (mx >= 10 && mx <= LOGICAL_W - 10 && my >= 10 && my <= LOGICAL_H - 10 &&
+            isPointClearOfShapes(mx, my, shapes, R)) {
+          return { x: mx, y: my };
+        }
+        return null;
+      }
+
+      function buildStage1Candidates(shapes) {
+        const R = state.ballRadius;
+        const candidates = [];
+        const principalAngles = [0, 45, 90, 135, 180, 225, 270, 315].map(d => (d * Math.PI) / 180);
+
+        const orderedIndices = [
+          ...shapes.map((s, i) => ({ s, i })).filter(o => o.s.type === 'target').map(o => o.i),
+          ...shapes.map((s, i) => ({ s, i })).filter(o => o.s.type === 'wall').map(o => o.i),
+        ];
+
+        for (const sIdx of orderedIndices) {
+          const verts = shapes[sIdx].vertices;
+          const n = verts.length;
+          const cent = polygonCentroid(verts);
+
+          for (let i = 0; i < n; i++) {
+            const a = verts[i];
+            const b = verts[(i + 1) % n];
+            const ex = b.x - a.x, ey = b.y - a.y;
+            const len = Math.hypot(ex, ey);
+            if (len < 6) continue;
+
+            let nx = -ey / len, ny = ex / len;
+            const midX = (a.x + b.x) * 0.5, midY = (a.y + b.y) * 0.5;
+            if ((midX - cent.x) * nx + (midY - cent.y) * ny < 0) {
+              nx = -nx;
+              ny = -ny;
+            }
+
+            const normalAngle = Math.atan2(ny, nx);
+            const samples = len > 65 ? [0.16, 0.34, 0.5, 0.66, 0.84] : [0.24, 0.5, 0.76];
+
+            for (const u of samples) {
+              const contactX = a.x + ex * u + nx * (R + 0.35);
+              const contactY = a.y + ey * u + ny * (R + 0.35);
+
+              // First test exact cardinal & 45° directions facing this edge
+              for (const pAng of principalAngles) {
+                const dot = Math.cos(pAng) * nx + Math.sin(pAng) * ny;
+                if (dot < -0.1) {
+                  candidates.push({ contactX, contactY, angle: pAng });
+                }
+              }
+
+              // Then sweep incoming angles across the face
+              const baseInAngle = normalAngle + Math.PI;
+              const stepDeg = shapes.length > 14 ? 4 : 3;
+              for (let deg = -80; deg <= 80; deg += stepDeg) {
+                candidates.push({
+                  contactX,
+                  contactY,
+                  angle: baseInAngle + (deg * Math.PI) / 180
+                });
+              }
+            }
+          }
+        }
+        return candidates;
+      }
+
+      async function runAutoSolver() {
+        const targets = state.shapes.filter(s => s.type === 'target');
+        if (targets.length === 0) {
+          showToast('Tidak ada bentuk putih (target) untuk diselesaikan!');
+          return;
+        }
+        if (state.solving) return;
+
+        // Switch cleanly to Solve tab & Play tool so the result is immediately visible
+        switchTab('solve');
+        setToolMode('play');
+        stopSimulation(true);
+
+        state.solving = true;
+        state.cancelSolveFlag = false;
+        solverOverlay.classList.remove('hidden');
+        solverStatusTitle.textContent = 'Tahap 1/3: Mencari Beragam Solusi...';
+        solverStatusSub.textContent = 'Memindai berbagai arah & sudut tembakan';
+        solverProgressBar.style.width = '5%';
+
+        const shapesSnapshot = state.shapes.map(s => ({
+          ...s,
+          vertices: s.vertices.map(v => ({ ...v }))
+        }));
+        const totalTargets = targets.length;
+        let bestOverall = null;
+        const topPool = [];
+        const winningMap = new Map(); // signature -> best winning sim in that family
+        const TARGET_DISTINCT_SOLUTIONS = 6;
+
+        function recordCandidate(sim) {
+          if (!bestOverall || sim.score > bestOverall.score) bestOverall = sim;
+
+          if (sim.solved) {
+            const sig = getSolutionSignature(sim);
+            const prev = winningMap.get(sig);
+            if (!prev || sim.bounces < prev.bounces) {
+              winningMap.set(sig, sim);
+            }
+            return;
+          }
+
+          if (sim.targetsHit > 0) {
+            const firstHitId = sim.hitEvents.length > 0 ? sim.hitEvents[0].shapeId : -1;
+            const angleBucket = Math.round(((sim.angle * 180) / Math.PI) / 5);
+            const key = `${firstHitId}_${angleBucket}`;
+            const idx = topPool.findIndex(item => item.key === key);
+            if (idx >= 0) {
+              if (sim.score > topPool[idx].sim.score) topPool[idx].sim = sim;
+            } else {
+              topPool.push({ key, sim });
+            }
+          }
+        }
+
+        const yieldFrame = () => new Promise(res => requestAnimationFrame(res));
+
+        try {
+          // STAGE 1: FACE-GUIDED BACKWARD RAY SWEEP (collects MULTIPLE distinct solutions!)
+          const stage1List = buildStage1Candidates(shapesSnapshot);
+          const CHUNK = 300;
+
+          for (let i = 0; i < stage1List.length; i++) {
+            if (state.cancelSolveFlag) break;
+            const c = stage1List[i];
+            const spawn = findComfortableSpawn(c.contactX, c.contactY, c.angle, shapesSnapshot);
+            if (spawn) {
+              const sim = simulateShot(spawn.x, spawn.y, c.angle, shapesSnapshot, true);
+              recordCandidate(sim);
+              // Keep sweeping to gather multiple distinct solutions up to cap
+              if (winningMap.size >= TARGET_DISTINCT_SOLUTIONS && i > stage1List.length * 0.45) {
+                break;
+              }
+            }
+            if (i % CHUNK === 0) {
+              const pct = Math.min(46, Math.round((i / stage1List.length) * 46));
+              solverProgressBar.style.width = `${pct}%`;
+              solverStatusSub.textContent = winningMap.size > 0
+                ? `Ditemukan ${winningMap.size} jalur solusi berbeda (${i}/${stage1List.length})`
+                : (bestOverall
+                  ? `Terbaik: ${bestOverall.targetsHit}/${totalTargets} target (${i} lintasan)`
+                  : `Mengecek ${i}/${stage1List.length} lintasan...`);
+              await yieldFrame();
+            }
+          }
+
+          // STAGE 2: MULTI-RESOLUTION LOCAL REFINEMENT (runs if < 4 distinct solutions found)
+          if (!state.cancelSolveFlag && winningMap.size < 4 && topPool.length > 0) {
+            solverStatusTitle.textContent = 'Tahap 2/3: Kalibrasi & Cari Alternatif...';
+            topPool.sort((a, b) => b.sim.score - a.sim.score);
+            const maxSeeds = winningMap.size === 0 ? 48 : 22;
+            const seeds = topPool.slice(0, maxSeeds).map(item => item.sim);
+
+            const refineRounds = [
+              { dAngDeg: 3.5, stepAngDeg: 0.35, dPerp: 12, stepPerp: 2.4 },
+              { dAngDeg: 0.6, stepAngDeg: 0.06, dPerp: 3.2, stepPerp: 0.65 },
+              { dAngDeg: 0.12, stepAngDeg: 0.015, dPerp: 0.9, stepPerp: 0.22 }
+            ];
+
+            for (let sIdx = 0; sIdx < seeds.length; sIdx++) {
+              if (state.cancelSolveFlag || winningMap.size >= TARGET_DISTINCT_SOLUTIONS) break;
+              let current = seeds[sIdx];
+              let seedSolved = false;
+
+              for (const r of refineRounds) {
+                let improved = current;
+                const perpX = -Math.sin(current.angle);
+                const perpY = Math.cos(current.angle);
+
+                for (let da = -r.dAngDeg; da <= r.dAngDeg + 1e-6; da += r.stepAngDeg) {
+                  const testAngle = current.angle + (da * Math.PI) / 180;
+                  for (let dp = -r.dPerp; dp <= r.dPerp + 1e-6; dp += r.stepPerp) {
+                    const tx = current.sx + perpX * dp;
+                    const ty = current.sy + perpY * dp;
+                    if (tx < 10 || tx > LOGICAL_W - 10 || ty < 10 || ty > LOGICAL_H - 10) continue;
+                    if (!isPointClearOfShapes(tx, ty, shapesSnapshot, state.ballRadius)) continue;
+
+                    const sim = simulateShot(tx, ty, testAngle, shapesSnapshot, true);
+                    if (sim.score > improved.score) improved = sim;
+                    if (sim.solved) {
+                      recordCandidate(sim);
+                      seedSolved = true;
+                      break;
+                    }
+                  }
+                  if (seedSolved) break;
+                }
+                current = improved;
+                if (current.score > (bestOverall ? bestOverall.score : -1)) bestOverall = current;
+                if (seedSolved) break;
+              }
+
+              const pct = 46 + Math.round(((sIdx + 1) / seeds.length) * 30);
+              solverProgressBar.style.width = `${pct}%`;
+              solverStatusSub.textContent = winningMap.size > 0
+                ? `Ditemukan ${winningMap.size} solusi berbeda • Menyempurnakan kandidat ${sIdx + 1}/${seeds.length}`
+                : `Menyempurnakan kandidat ${sIdx + 1}/${seeds.length} • Terbaik: ${bestOverall.targetsHit}/${totalTargets}`;
+              await yieldFrame();
+            }
+          }
+
+          // STAGE 3: GLOBAL EXPLORATION (only if still 0 solutions or seeking a 2nd alternative)
+          if (!state.cancelSolveFlag && winningMap.size < 2) {
+            solverStatusTitle.textContent = winningMap.size === 0
+              ? 'Tahap 3/3: Eksplorasi Mendalam...'
+              : 'Tahap 3/3: Mencari Jalur Alternatif...';
+            const totalTries = winningMap.size === 0 ? 9500 : 3000;
+            for (let t = 0; t < totalTries; t++) {
+              if (state.cancelSolveFlag) break;
+
+              let sx, sy, ang;
+              if (bestOverall && winningMap.size === 0 && Math.random() < 0.7) {
+                const spreadPos = (t % 3 === 0) ? 28 : 7;
+                const spreadAng = (t % 3 === 0) ? 0.16 : 0.02;
+                sx = bestOverall.sx + (Math.random() - 0.5) * 2 * spreadPos;
+                sy = bestOverall.sy + (Math.random() - 0.5) * 2 * spreadPos;
+                ang = bestOverall.angle + (Math.random() - 0.5) * 2 * spreadAng;
+              } else {
+                const tgt = targets[Math.floor(Math.random() * targets.length)];
+                const tc = polygonCentroid(tgt.vertices);
+                sx = 16 + Math.random() * (LOGICAL_W - 32);
+                sy = 16 + Math.random() * (LOGICAL_H - 32);
+                ang = Math.atan2(tc.y - sy, tc.x - sx) + (Math.random() - 0.5) * 0.55;
+              }
+
+              if (sx < 10 || sx > LOGICAL_W - 10 || sy < 10 || sy > LOGICAL_H - 10) continue;
+              if (!isPointClearOfShapes(sx, sy, shapesSnapshot, state.ballRadius)) continue;
+
+              const sim = simulateShot(sx, sy, ang, shapesSnapshot, true);
+              recordCandidate(sim);
+              if (winningMap.size >= 3) break;
+
+              if (t % 360 === 0) {
+                const pct = 76 + Math.round((t / totalTries) * 14);
+                solverProgressBar.style.width = `${pct}%`;
+                solverStatusSub.textContent = winningMap.size > 0
+                  ? `${winningMap.size} solusi ditemukan • Mencari alternatif lebih mudah...`
+                  : `Eksplorasi lanjutan • Terbaik: ${bestOverall ? bestOverall.targetsHit : 0}/${totalTargets} target`;
+                await yieldFrame();
+              }
+            }
+          }
+
+          // STAGE 4: ANALYZE, CENTER IN SAFE ZONE & RANK BY EASE!
+          if (!state.cancelSolveFlag) {
+            solverStatusTitle.textContent = 'Menganalisis Kemudahan & Margin Aman...';
+            solverStatusSub.textContent = 'Mengukur toleransi sudut & posisi jari setiap solusi';
+            solverProgressBar.style.width = '94%';
+            await yieldFrame();
+          }
+        } finally {
+          state.solving = false;
+          solverOverlay.classList.add('hidden');
+        }
+
+        if (state.cancelSolveFlag) {
+          showToast('Pencarian Auto-Solve dibatalkan.');
+          return;
+        }
+
+        // Gather raw candidates to analyze (all winning solutions, or top 3 partial attempts)
+        let rawToAnalyze = Array.from(winningMap.values());
+        if (rawToAnalyze.length === 0 && bestOverall) {
+          topPool.sort((a, b) => b.sim.score - a.sim.score);
+          rawToAnalyze = [bestOverall];
+          for (const item of topPool) {
+            if (rawToAnalyze.length >= 3) break;
+            if (Math.hypot(item.sim.sx - bestOverall.sx, item.sim.sy - bestOverall.sy) > 25) {
+              rawToAnalyze.push(item.sim);
+            }
+          }
+        }
+
+        if (rawToAnalyze.length === 0) {
+          showToast('Tidak ditemukan lintasan valid. Pastikan ada ruang kosong untuk bola.');
+          return;
+        }
+
+        // Pull spawns back to comfortable finger positions, then analyze & center each!
+        const analyzedList = [];
+        for (const rawSim of rawToAnalyze.slice(0, 10)) {
+          let baseSim = rawSim;
+          if (rawSim.hitEvents.length > 0) {
+            const firstHit = rawSim.hitEvents[0];
+            const comfy = findComfortableSpawn(firstHit.hitX, firstHit.hitY, rawSim.angle, shapesSnapshot);
+            if (comfy) {
+              const verified = simulateShot(comfy.x, comfy.y, rawSim.angle, shapesSnapshot, false);
+              if ((rawSim.solved && verified.solved) || (!rawSim.solved && verified.targetsHit >= rawSim.targetsHit)) {
+                baseSim = verified;
+              }
+            }
+          }
+          analyzedList.push(analyzeAndCenterSolution(baseSim, shapesSnapshot));
+        }
+
+        // Deduplicate any solutions that converged to nearly identical centered shots
+        const uniqueAnalyzed = [];
+        for (const item of analyzedList) {
+          const isDup = uniqueAnalyzed.some(other => {
+            const distPos = Math.hypot(item.sx - other.sx, item.sy - other.sy);
+            const angDiff = Math.abs(Math.atan2(Math.sin(item.angle - other.angle), Math.cos(item.angle - other.angle)));
+            return distPos < 20 && angDiff < (8 * Math.PI) / 180;
+          });
+          if (!isDup) uniqueAnalyzed.push(item);
+        }
+
+        // Sort: Solved first, then highest Ease Score, then widest angle tolerance, then fewest bounces
+        uniqueAnalyzed.sort((a, b) => {
+          if (a.solved !== b.solved) return a.solved ? -1 : 1;
+          if (b.analysis.easeScore !== a.analysis.easeScore) return b.analysis.easeScore - a.analysis.easeScore;
+          if (b.analysis.angleTolDeg !== a.analysis.angleTolDeg) return b.analysis.angleTolDeg - a.analysis.angleTolDeg;
+          return a.simResult.bounces - b.simResult.bounces;
+        });
+
+        const finalSolutions = uniqueAnalyzed.slice(0, 6);
+
+        // Assign meaningful comparison badges
+        if (finalSolutions.length > 0 && finalSolutions[0].solved) {
+          finalSolutions[0].badges.push('⭐ CARA TERMUDAH');
+
+          let widestIdx = 0, shortestIdx = 0;
+          for (let i = 1; i < finalSolutions.length; i++) {
+            if (!finalSolutions[i].solved) continue;
+            if (finalSolutions[i].analysis.angleTolDeg > finalSolutions[widestIdx].analysis.angleTolDeg) widestIdx = i;
+            if (finalSolutions[i].simResult.bounces < finalSolutions[shortestIdx].simResult.bounces) shortestIdx = i;
+          }
+          if (widestIdx !== 0) finalSolutions[widestIdx].badges.push('🛡️ Toleransi Terlebar');
+          if (shortestIdx !== 0 && !finalSolutions[shortestIdx].badges.length) {
+            finalSolutions[shortestIdx].badges.push('⚡ Pantulan Tersingkat');
+          }
+          for (let i = 1; i < finalSolutions.length; i++) {
+            if (finalSolutions[i].analysis.isStraight && !finalSolutions[i].badges.length) {
+              finalSolutions[i].badges.push('📐 Sudut Lurus');
+            }
+          }
+        }
+
+        state.solutions = finalSolutions;
+        selectSolutionByIndex(0, true);
+
+        const solvedCount = finalSolutions.filter(s => s.solved).length;
+        if (solvedCount > 1) {
+          showToast(`Ditemukan ${solvedCount} solusi berbeda! Solusi #1 dipilih sebagai cara termudah.`);
+        } else if (solvedCount === 1) {
+          showToast(`Solusi ditemukan & dipusatkan ke zona aman! Skor Kemudahan: ${finalSolutions[0].analysis.easeScore}/100.`);
+        } else {
+          showToast(`Terbaik: ${finalSolutions[0].simResult.targetsHit}/${finalSolutions[0].simResult.totalTargets} target. Cek Kalibrasi Presisi.`);
+        }
+      }
+
+      /**
+       * Selects one of the ranked multi-solutions, updates cards + analysis + fine-tune, and replays it.
+       */
+      function selectSolutionByIndex(index, autoPlay = true) {
+        if (index < 0 || index >= state.solutions.length) return;
+        state.activeSolutionIdx = index;
+        const entry = state.solutions[index];
+
+        state.solutionShot = entry;
+        state.showGuide = true;
+        btnShowGuide.classList.add('active-emerald');
+        btnReplay.disabled = false;
+        btnFocusStart.disabled = false;
+        btnFireFineTune.disabled = false;
+
+        syncFineTuneSliders(entry.sx, entry.sy, entry.angle);
+        updateSolutionPanel(entry.simResult, entry.analysis);
+        renderMultiSolutionList();
+
+        if (autoPlay) launchSimulationFromShot(entry.simResult);
+      }
+
+      /**
+       * Renders the interactive Multi-Solution comparison cards sorted from easiest to hardest.
+       */
+      function renderMultiSolutionList() {
+        if (!state.solutions || state.solutions.length === 0) {
+          multiSolutionCard.classList.add('hidden');
+          solutionsListContainer.innerHTML = '';
+          return;
+        }
+
+        multiSolutionCard.classList.remove('hidden');
+        const solvedCount = state.solutions.filter(s => s.solved).length;
+        multiSolutionSub.textContent = solvedCount > 0
+          ? `${solvedCount} jalur solusi dianalisis • Diurutkan dari yang paling mudah ditiru`
+          : `${state.solutions.length} kandidat terbaik • Pilih untuk menyempurnakan`;
+
+        solutionsListContainer.innerHTML = '';
+        state.solutions.forEach((sol, idx) => {
+          const a = sol.analysis;
+          const deg = (((sol.angle * 180) / Math.PI) % 360 + 360) % 360;
+          const isActive = idx === state.activeSolutionIdx;
+
+          const card = document.createElement('button');
+          card.type = 'button';
+          card.className = `sol-card text-left p-3 rounded-2xl w-full flex flex-col gap-2 ${isActive ? 'active' : ''}`;
+
+          const badgeHtml = sol.badges.length > 0
+            ? `<span class="text-[10px] font-extrabold px-2 py-0.5 rounded-full ${idx === 0 ? 'bg-emerald-500/25 text-emerald-300' : 'bg-sky-500/20 text-sky-300'}">${sol.badges[0]}</span>`
+            : `<span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">${a.tierLabel}</span>`;
+
+          const barColor = a.easeScore >= 78
+            ? 'from-emerald-400 to-teal-300'
+            : (a.easeScore >= 60 ? 'from-sky-400 to-indigo-400' : (a.easeScore >= 42 ? 'from-amber-400 to-orange-400' : 'from-rose-400 to-pink-500'));
+
+          card.innerHTML = `
+            <div class="flex items-center justify-between gap-1.5">
+              <span class="text-xs font-extrabold text-white">Solusi #${idx + 1}</span>
+              ${badgeHtml}
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div class="h-full bg-gradient-to-r ${barColor} rounded-full" style="width:${a.easeScore}%"></div>
+              </div>
+              <span class="text-[11px] font-mono font-bold text-slate-200">${a.easeScore}/100</span>
+            </div>
+            <div class="grid grid-cols-3 gap-1 text-[10px] text-slate-300 font-mono">
+              <div class="bg-slate-950/50 rounded-lg px-1.5 py-1 text-center">
+                <div class="text-slate-400 text-[9px]">Sudut</div>
+                <div class="text-emerald-300 font-bold">±${a.angleTolDeg.toFixed(1)}°</div>
+              </div>
+              <div class="bg-slate-950/50 rounded-lg px-1.5 py-1 text-center">
+                <div class="text-slate-400 text-[9px]">Posisi</div>
+                <div class="text-sky-300 font-bold">±${a.posTolPx.toFixed(0)}px</div>
+              </div>
+              <div class="bg-slate-950/50 rounded-lg px-1.5 py-1 text-center">
+                <div class="text-slate-400 text-[9px]">Pantul</div>
+                <div class="text-indigo-300 font-bold">${sol.simResult.bounces}x</div>
+              </div>
+            </div>
+            <div class="text-[10px] text-slate-400 flex items-center justify-between">
+              <span>Arah ${angleToCompassText(deg)} (${deg.toFixed(0)}°)</span>
+              <span class="text-emerald-300 font-semibold">${isActive ? '● Aktif' : '▶ Pilih'}</span>
+            </div>
+          `;
+
+          card.addEventListener('click', () => {
+            ensureAudio();
+            selectSolutionByIndex(idx, true);
+          });
+          solutionsListContainer.appendChild(card);
+        });
+      }
+
+      function applySolutionResult(sim, autoPlay = true) {
+        const analyzed = analyzeAndCenterSolution(sim, state.shapes);
+        state.solutionShot = analyzed;
+        state.activeSolutionIdx = -1;
+        state.showGuide = true;
+        btnShowGuide.classList.add('active-emerald');
+        btnReplay.disabled = false;
+        btnFocusStart.disabled = false;
+        btnFireFineTune.disabled = false;
+
+        syncFineTuneSliders(analyzed.sx, analyzed.sy, analyzed.angle);
+        updateSolutionPanel(analyzed.simResult, analyzed.analysis);
+        renderMultiSolutionList();
+        if (autoPlay) launchSimulationFromShot(analyzed.simResult);
+      }
+
+      // =======================================================================
+      // 8. COMPUTER VISION: SHARP TRIANGLE & RECTANGLE SCREENSHOT DETECTOR
+      // =======================================================================
+
+      function convexHull(points) {
+        if (points.length <= 3) return points;
+        const pts = points.slice().sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
+        const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+        const lower = [];
+        for (const p of pts) {
+          while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+          lower.push(p);
+        }
+        const upper = [];
+        for (let i = pts.length - 1; i >= 0; i--) {
+          const p = pts[i];
+          while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+          upper.push(p);
+        }
+        lower.pop();
+        upper.pop();
+        return lower.concat(upper);
+      }
+
+      function polygonArea(poly) {
+        let area = 0;
+        for (let i = 0; i < poly.length; i++) {
+          const a = poly[i], b = poly[(i + 1) % poly.length];
+          area += a.x * b.y - b.x * a.y;
+        }
+        return Math.abs(area) * 0.5;
+      }
+
+      function computeMinAreaOBB(hull) {
+        let minArea = Infinity, bestCorners = null;
+        for (let i = 0; i < hull.length; i++) {
+          const p1 = hull[i], p2 = hull[(i + 1) % hull.length];
+          const ex = p2.x - p1.x, ey = p2.y - p1.y;
+          const len = Math.hypot(ex, ey);
+          if (len < 1e-6) continue;
+          const ux = ex / len, uy = ey / len;
+          const vx = -uy, vy = ux;
+          let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+          for (const p of hull) {
+            const u = p.x * ux + p.y * uy;
+            const v = p.x * vx + p.y * vy;
+            if (u < minU) minU = u;
+            if (u > maxU) maxU = u;
+            if (v < minV) minV = v;
+            if (v > maxV) maxV = v;
+          }
+          const area = (maxU - minU) * (maxV - minV);
+          if (area < minArea) {
+            minArea = area;
+            bestCorners = [
+              { x: minU * ux + minV * vx, y: minU * uy + minV * vy },
+              { x: maxU * ux + minV * vx, y: maxU * uy + minV * vy },
+              { x: maxU * ux + maxV * vx, y: maxU * uy + maxV * vy },
+              { x: minU * ux + maxV * vx, y: minU * uy + maxV * vy }
+            ];
+          }
+        }
+        return { area: minArea, corners: bestCorners };
+      }
+
+      function simplifyConvexPolygon(hull, targetMaxVerts = 6, minAreaLossRatio = 0.018) {
+        let poly = hull.slice();
+        const totalArea = polygonArea(poly);
+        if (totalArea < 1) return poly;
+
+        while (poly.length > 3) {
+          let minTriArea = Infinity, removeIdx = -1;
+          for (let i = 0; i < poly.length; i++) {
+            const prev = poly[(i - 1 + poly.length) % poly.length];
+            const curr = poly[i];
+            const next = poly[(i + 1) % poly.length];
+            const triArea = Math.abs((curr.x - prev.x) * (next.y - prev.y) - (curr.y - prev.y) * (next.x - prev.x)) * 0.5;
+            if (triArea < minTriArea) {
+              minTriArea = triArea;
+              removeIdx = i;
+            }
+          }
+          if (poly.length > targetMaxVerts || (minTriArea / totalArea) < minAreaLossRatio) {
+            poly.splice(removeIdx, 1);
+          } else {
+            break;
+          }
+        }
+        return poly;
+      }
+
+      function extractShapesFromUploadedImage() {
+        const img = state.uploadedImage;
+        if (!img) return;
+
+        const maxDim = 420;
+        const scale = Math.min(maxDim / img.width, maxDim / img.height, 1);
+        const pw = Math.max(40, Math.round(img.width * scale));
+        const ph = Math.max(40, Math.round(img.height * scale));
+
+        procCanvas.width = pw;
+        procCanvas.height = ph;
+        procCtx.drawImage(img, 0, 0, pw, ph);
+        const imgData = procCtx.getImageData(0, 0, pw, ph).data;
+
+        const topCut = state.ignoreStatusBars ? Math.floor(ph * 0.055) : 0;
+        const botCut = state.ignoreStatusBars ? Math.floor(ph * 0.945) : ph;
+
+        // 1. Dominant background color
+        const buckets = new Map();
+        for (let y = topCut; y < botCut; y += 2) {
+          for (let x = 0; x < pw; x += 2) {
+            const idx = (y * pw + x) * 4;
+            const r = imgData[idx], g = imgData[idx + 1], b = imgData[idx + 2];
+            const key = `${r >> 3},${g >> 3},${b >> 3}`;
+            const entry = buckets.get(key) || { count: 0, r: 0, g: 0, b: 0 };
+            entry.count++; entry.r += r; entry.g += g; entry.b += b;
+            buckets.set(key, entry);
+          }
+        }
+        let bgEntry = { count: 1, r: 63, g: 73, b: 87 };
+        for (const entry of buckets.values()) {
+          if (entry.count > bgEntry.count) bgEntry = entry;
+        }
+        const bgR = Math.round(bgEntry.r / bgEntry.count);
+        const bgG = Math.round(bgEntry.g / bgEntry.count);
+        const bgB = Math.round(bgEntry.b / bgEntry.count);
+        const bgLum = 0.299 * bgR + 0.587 * bgG + 0.114 * bgB;
+        state.bgColor = `rgb(${bgR}, ${bgG}, ${bgB})`;
+
+        // 2. Foreground classification
+        const labels = new Uint8Array(pw * ph);
+        const sens = state.detectSensitivity;
+        const sensSq = sens * sens * 3 * 0.65;
+        const lightBg = bgLum > 195;
+
+        for (let y = topCut; y < botCut; y++) {
+          for (let x = 0; x < pw; x++) {
+            const pIdx = y * pw + x;
+            const idx = pIdx * 4;
+            const r = imgData[idx], g = imgData[idx + 1], b = imgData[idx + 2];
+            const dr = r - bgR, dg = g - bgG, db = b - bgB;
+            if (dr * dr + dg * dg + db * db > sensSq) {
+              const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+              let cls;
+              if (!lightBg) cls = (lum >= bgLum + 18 || lum > 175) ? 1 : 2;
+              else cls = (lum < 95) ? 1 : 2;
+              if (state.swapTargetWall) cls = (cls === 1 ? 2 : 1);
+              labels[pIdx] = cls;
+            }
+          }
+        }
+
+        // 3. Connected Components + Smart Triangle/Rectangle Fitting
+        const visited = new Uint8Array(pw * ph);
+        const rawShapes = [];
+        const minAreaPx = Math.max(30, Math.floor(pw * ph * 0.00045));
+        const maxAreaPx = Math.floor(pw * ph * 0.45);
+        const queueX = new Int32Array(pw * ph);
+        const queueY = new Int32Array(pw * ph);
+
+        for (let y = topCut; y < botCut; y++) {
+          for (let x = 0; x < pw; x++) {
+            const startIdx = y * pw + x;
+            const cls = labels[startIdx];
+            if (cls === 0 || visited[startIdx]) continue;
+
+            let qHead = 0, qTail = 0;
+            queueX[qTail] = x; queueY[qTail] = y; qTail++;
+            visited[startIdx] = 1;
+
+            const boundary = [];
+            let minX = x, maxX = x, minY = y, maxY = y, pixelCount = 0;
+
+            while (qHead < qTail) {
+              const cx = queueX[qHead], cy = queueY[qHead];
+              qHead++; pixelCount++;
+              if (cx < minX) minX = cx; if (cx > maxX) maxX = cx;
+              if (cy < minY) minY = cy; if (cy > maxY) maxY = cy;
+
+              let isBoundary = false;
+              const nbs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+              for (let k = 0; k < 4; k++) {
+                const nx = cx + nbs[k][0], ny = cy + nbs[k][1];
+                if (nx < 0 || nx >= pw || ny < topCut || ny >= botCut) {
+                  isBoundary = true;
+                  continue;
+                }
+                const nIdx = ny * pw + nx;
+                if (labels[nIdx] !== cls) isBoundary = true;
+                else if (!visited[nIdx]) {
+                  visited[nIdx] = 1;
+                  queueX[qTail] = nx; queueY[qTail] = ny; qTail++;
+                }
+              }
+              if (isBoundary) boundary.push({ x: cx + 0.5, y: cy + 0.5 });
+            }
+
+            const bw = maxX - minX + 1, bh = maxY - minY + 1;
+            if (pixelCount < minAreaPx || pixelCount > maxAreaPx) continue;
+            if (bw > pw * 0.92 && bh > ph * 0.85) continue;
+
+            const hull = convexHull(boundary);
+            if (hull.length < 3) continue;
+
+            const hullArea = polygonArea(hull);
+            const obb = computeMinAreaOBB(hull);
+            const rectangularity = obb.area > 1 ? pixelCount / obb.area : 0;
+
+            // Test crisp 3-vertex triangle fit!
+            const triPoly = simplifyConvexPolygon(hull, 3, 1.0);
+            const triRatio = hullArea > 1 ? polygonArea(triPoly) / hullArea : 0;
+
+            let finalPoly;
+            if (rectangularity >= 0.80 && obb.corners) {
+              finalPoly = obb.corners;
+            } else if (triRatio >= 0.88 && triPoly.length === 3) {
+              // Crisp razor-sharp 3-vertex triangle (essential for accurate 45° reflections!)
+              finalPoly = triPoly;
+            } else {
+              finalPoly = simplifyConvexPolygon(hull, 6, 0.02);
+            }
+
+            rawShapes.push({
+              type: cls === 1 ? 'target' : 'wall',
+              poly: finalPoly
+            });
+          }
+        }
+
+        // 4. Map to logical coordinates preserving aspect ratio
+        const imgAspect = pw / ph;
+        const stageAspect = LOGICAL_W / LOGICAL_H;
+        let drawW, drawH, offsetX, offsetY;
+        if (imgAspect > stageAspect) {
+          drawW = LOGICAL_W; drawH = LOGICAL_W / imgAspect;
+          offsetX = 0; offsetY = (LOGICAL_H - drawH) * 0.5;
+        } else {
+          drawH = LOGICAL_H; drawW = LOGICAL_H * imgAspect;
+          offsetX = (LOGICAL_W - drawW) * 0.5; offsetY = 0;
+        }
+
+        state.uploadedRect = { x: offsetX, y: offsetY, w: drawW, h: drawH };
+        state.shapes = rawShapes.map(rs => ({
+          id: nextShapeId++,
+          type: rs.type,
+          vertices: rs.poly.map(p => ({
+            x: offsetX + (p.x / pw) * drawW,
+            y: offsetY + (p.y / ph) * drawH
+          })),
+          alive: true,
+          flash: 0
+        }));
+
+        state.selectedShapeId = null;
+        state.solutionShot = null;
+        state.solutions = [];
+        state.activeSolutionIdx = -1;
+        btnReplay.disabled = true;
+        btnFocusStart.disabled = true;
+        btnAnalyzeFineTune.disabled = true;
+        btnFireFineTune.disabled = true;
+        easeAnalysisBox.classList.add('hidden');
+        renderMultiSolutionList();
+        stopSimulation(true);
+        updateHud();
+        updateSelectionInspector();
+
+        const tCount = state.shapes.filter(s => s.type === 'target').length;
+        const wCount = state.shapes.filter(s => s.type === 'wall').length;
+        detectSummary.textContent = `Terdeteksi: ${tCount} Target Putih, ${wCount} Dinding Hitam`;
+        imageCalibrationPanel.classList.remove('hidden');
+        document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active-toggle'));
+
+        solutionBadge.textContent = 'Siap di-Solve';
+        solutionBadge.className = 'text-[11px] font-bold px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300';
+        solutionText.innerHTML = `Screenshot berhasil dipindai (<strong>${tCount} target</strong>, <strong>${wCount} dinding</strong>). Klik <strong class="text-emerald-400">Auto Solve</strong> untuk mencari solusi, atau gunakan <strong>Zoom & Edit Posisi</strong> untuk menyempurnakan bentuk.`;
+        metricStart.textContent = 'Siap';
+        metricAngle.textContent = '-';
+        metricHits.textContent = `0 / ${tCount}`;
+        metricBounces.textContent = 'Klik Auto Solve';
+      }
+
+      function handleImageFile(file) {
+        if (!file || !file.type.startsWith('image/')) {
+          showToast('Pilih file gambar (PNG / JPG / WebP).');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            state.uploadedImage = img;
+            state.showImageOverlay = true;
+            btnToggleOverlay.textContent = 'Overlay Foto: ON';
+            btnToggleOverlay.classList.add('active-toggle');
+            resetCamera();
+            extractShapesFromUploadedImage();
+            switchTab('scan');
+            showToast('Screenshot berhasil dipindai! Klik Auto Solve.');
+          };
+          img.onerror = () => showToast('Gagal membaca file gambar.');
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      }
+
+      // =======================================================================
+      // 9. PLAYBACK, UI SYNC & HELPERS
+      // =======================================================================
+
+      function angleToCompassText(deg) {
+        const dirs = [
+          'Kanan →', 'Kanan-Bawah ↘', 'Bawah ↓', 'Kiri-Bawah ↙',
+          'Kiri ←', 'Kiri-Atas ↖', 'Atas ↑', 'Kanan-Atas ↗'
+        ];
+        const idx = Math.round(((deg % 360) + 360) % 360 / 45) % 8;
+        return dirs[idx];
+      }
+
+      function spawnBurstParticles(shape) {
+        const c = polygonCentroid(shape.vertices);
+        const color = shape.type === 'target' ? '#ffffff' : '#94a3b8';
+        for (let i = 0; i < 12; i++) {
+          const ang = (Math.PI * 2 * i) / 12 + (Math.random() - 0.5) * 0.4;
+          const spd = 60 + Math.random() * 130;
+          state.particles.push({
+            x: c.x + (Math.random() - 0.5) * 14,
+            y: c.y + (Math.random() - 0.5) * 14,
+            vx: Math.cos(ang) * spd,
+            vy: Math.sin(ang) * spd,
+            size: 2.2 + Math.random() * 3,
+            alpha: 1,
+            color
+          });
+        }
+      }
+
+      function stopSimulation(restoreShapes = true) {
+        if (state.restoreTimer) {
+          clearTimeout(state.restoreTimer);
+          state.restoreTimer = null;
+        }
+        state.simPlaying = false;
+        state.simPath = null;
+        state.simBallPos = null;
+        state.simTrail = [];
+        state.impacts = [];
+        state.hitCombo = 0;
+        winBanner.classList.add('hidden');
+        if (restoreShapes) {
+          for (const s of state.shapes) {
+            s.alive = true;
+            s.flash = 0;
+          }
+        }
+        updateHud();
+      }
+
+      function launchSimulationFromShot(simResult) {
+        stopSimulation(true);
+        state.simPath = simResult;
+        state.simPlaying = true;
+        state.simSegmentIdx = 0;
+        state.simSegmentDist = 0;
+        state.simBallPos = { x: simResult.points[0].x, y: simResult.points[0].y };
+        state.simTrail = [{ x: simResult.points[0].x, y: simResult.points[0].y }];
+        state.hitCombo = 0;
+      }
+
+      function updateHud() {
+        const total = state.shapes.filter(s => s.type === 'target').length;
+        const alive = state.shapes.filter(s => s.type === 'target' && s.alive).length;
+        hudTargetCount.textContent = `${alive} / ${total}`;
+      }
+
+      function syncFineTuneSliders(sx, sy, angle) {
+        const deg = (((angle * 180) / Math.PI) % 360 + 360) % 360;
+        sliderFineX.value = Math.max(10, Math.min(390, sx)).toFixed(1);
+        sliderFineY.value = Math.max(10, Math.min(670, sy)).toFixed(1);
+        sliderFineAng.value = deg.toFixed(1);
+        fineXVal.textContent = Number(sliderFineX.value).toFixed(1);
+        fineYVal.textContent = Number(sliderFineY.value).toFixed(1);
+        fineAngVal.textContent = `${Number(sliderFineAng.value).toFixed(1)}°`;
+        btnAnalyzeFineTune.disabled = false;
+        btnFireFineTune.disabled = false;
+      }
+
+      function updateSolutionPanel(sim, analysis = null) {
+        const deg = (((sim.angle * 180) / Math.PI) % 360 + 360) % 360;
+        const startPctX = Math.round((sim.sx / LOGICAL_W) * 100);
+        const startPctY = Math.round((sim.sy / LOGICAL_H) * 100);
+
+        metricStart.textContent = `${startPctX}%, ${startPctY}%`;
+        metricAngle.textContent = `${deg.toFixed(1)}°`;
+        metricCompass.textContent = `Arah ${angleToCompassText(deg)}`;
+        metricHits.textContent = `${sim.targetsHit} / ${sim.totalTargets}`;
+        metricBounces.textContent = `${sim.bounces} pantulan berantai`;
+
+        if (analysis) {
+          easeAnalysisBox.classList.remove('hidden');
+          easeTierBadge.textContent = (state.activeSolutionIdx === 0 && sim.solved)
+            ? `⭐ ${analysis.tierLabel} (Rekomendasi)`
+            : analysis.tierLabel;
+          easeTierBadge.className = `text-[11px] font-extrabold px-2.5 py-0.5 rounded-full ${analysis.tierClass}`;
+          easeScoreText.textContent = `Skor Kemudahan ${analysis.easeScore}/100`;
+          easeAngleTol.textContent = `±${analysis.angleTolDeg.toFixed(2)}°`;
+          easePosTol.textContent = `±${analysis.posTolPx.toFixed(1)}px`;
+          easeScoreBar.style.width = `${analysis.easeScore}%`;
+          easeReasonText.textContent = analysis.reasonText;
+        } else {
+          easeAnalysisBox.classList.add('hidden');
+        }
+
+        if (sim.solved) {
+          solutionBadge.textContent = 'SOLVED 100%';
+          solutionBadge.className = 'text-[11px] font-extrabold px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30';
+          solutionText.innerHTML = `Sentuh tepat di <strong class="text-emerald-300">lingkaran hijau</strong> (${startPctX}% kiri, ${startPctY}% atas), lalu bidik ke arah <strong class="text-sky-300">${angleToCompassText(deg)} (${deg.toFixed(1)}°)</strong>. Klik <strong>🔍 Fokus Awal</strong> untuk memperbesar titik mulai & melihat lebar <strong>Zona Aman</strong>-nya!`;
+        } else {
+          solutionBadge.textContent = `Parsial (${sim.targetsHit}/${sim.totalTargets})`;
+          solutionBadge.className = 'text-[11px] font-bold px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-400/30';
+          solutionText.innerHTML = `Lintasan saat ini mengenai <strong>${sim.targetsHit} dari ${sim.totalTargets} target</strong>. Kamu bisa menggeser slider <strong>Kalibrasi Tembakan Presisi</strong> di bawah untuk menyempurnakan sudutnya secara live, atau rapikan posisi balok di tab <strong>Atur Posisi</strong>.`;
+        }
+      }
+
+      function updateSelectionInspector() {
+        const s = state.shapes.find(sh => sh.id === state.selectedShapeId);
+        if (!s) {
+          noSelectionMsg.classList.remove('hidden');
+          activeSelectionControls.classList.add('hidden');
+          return;
+        }
+        noSelectionMsg.classList.add('hidden');
+        activeSelectionControls.classList.remove('hidden');
+        const c = polygonCentroid(s.vertices);
+        const shapeKind = s.vertices.length === 3 ? 'Segitiga' : (s.vertices.length === 4 ? 'Balok' : 'Poligon');
+        const role = s.type === 'target' ? 'Target Putih' : 'Dinding Hitam';
+        selShapeTitle.textContent = `${shapeKind} (${role})`;
+        selShapeCoords.textContent = `X: ${Math.round(c.x)}, Y: ${Math.round(c.y)}`;
+      }
+
+      function switchTab(tabKey) {
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.tab === tabKey);
+        });
+        document.getElementById('tabPanelSolve').classList.toggle('hidden', tabKey !== 'solve');
+        document.getElementById('tabPanelScan').classList.toggle('hidden', tabKey !== 'scan');
+        document.getElementById('tabPanelEdit').classList.toggle('hidden', tabKey !== 'edit');
+      }
+
+      function setToolMode(mode) {
+        state.toolMode = mode;
+        toolPlay.className = `tool-pill py-2 px-2 rounded-xl text-xs flex items-center justify-center gap-1.5 ${mode === 'play' ? 'active' : ''}`;
+        toolPan.className = `tool-pill py-2 px-2 rounded-xl text-xs flex items-center justify-center gap-1.5 ${mode === 'pan' ? 'active-pan' : ''}`;
+        toolEdit.className = `tool-pill py-2 px-2 rounded-xl text-xs flex items-center justify-center gap-1.5 ${mode === 'edit' ? 'active-edit' : ''}`;
+
+        canvas.classList.remove('cursor-play', 'cursor-pan', 'cursor-edit');
+        canvas.classList.add(mode === 'play' ? 'cursor-play' : (mode === 'pan' ? 'cursor-pan' : 'cursor-edit'));
+
+        if (mode === 'play') {
+          stageHintBadge.textContent = 'Tarik untuk membidik. Scroll / cubit 2 jari untuk zoom.';
+        } else if (mode === 'pan') {
+          stageHintBadge.textContent = 'Seret layar untuk menggeser tampilan yang di-zoom.';
+        } else {
+          stageHintBadge.textContent = 'Ketuk bentuk untuk memilih, seret untuk pindah, tarik titik hijau untuk putar.';
+          stopSimulation(true);
+        }
+      }
+
+      function loadPreset(key) {
+        const preset = PRESETS[key];
+        if (!preset) return;
+        state.uploadedImage = null;
+        imageCalibrationPanel.classList.add('hidden');
+        state.bgColor = preset.bgColor;
+        state.ballRadius = preset.ballRadius || 5.5;
+        sliderBallSize.value = state.ballRadius;
+        ballSizeVal.textContent = `${state.ballRadius.toFixed(1)} px`;
+
+        state.shapes = preset.build();
+        state.selectedShapeId = null;
+        state.solutionShot = null;
+        state.solutions = [];
+        state.activeSolutionIdx = -1;
+        btnReplay.disabled = true;
+        btnFocusStart.disabled = true;
+        btnAnalyzeFineTune.disabled = true;
+        btnFireFineTune.disabled = true;
+        easeAnalysisBox.classList.add('hidden');
+        renderMultiSolutionList();
+        resetCamera();
+        stopSimulation(true);
+        updateHud();
+        updateSelectionInspector();
+
+        document.querySelectorAll('.preset-btn').forEach(b => {
+          b.classList.toggle('active-toggle', b.dataset.preset === key);
+        });
+
+        const tCount = state.shapes.filter(s => s.type === 'target').length;
+        solutionBadge.textContent = preset.name;
+        solutionBadge.className = 'text-[11px] font-bold px-3 py-1 rounded-full bg-slate-800 text-slate-300';
+        metricStart.textContent = 'Siap';
+        metricAngle.textContent = '-';
+        metricCompass.textContent = 'Ikuti panah arah tembak';
+        metricHits.textContent = `0 / ${tCount}`;
+        metricBounces.textContent = 'Klik Auto Solve';
+        solutionText.innerHTML = `<strong>${preset.name}</strong> dimuat (${tCount} target). Klik <strong class="text-emerald-400">Auto Solve</strong> untuk langsung menemukan solusi & melihat simulasi pantulannya!`;
+      }
+
+      let toastTimer = null;
+      function showToast(msg) {
+        toastEl.textContent = msg;
+        toastEl.classList.remove('hidden', 'toast-anim');
+        void toastEl.offsetWidth;
+        toastEl.classList.add('toast-anim');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toastEl.classList.add('hidden'), 3200);
+      }
+
+      // =======================================================================
+      // 10. CRISP HIDPI RENDERING WITH CAMERA TRANSFORM & CLEAR ANNOTATIONS
+      // =======================================================================
+
+      function resizeCanvas() {
+        const rect = stageContainer.getBoundingClientRect();
+        const dpr = Math.min(window.devicePixelRatio || 1, 3);
+        canvas.width = Math.round(rect.width * dpr);
+        canvas.height = Math.round(rect.height * dpr);
+      }
+
+      function getRotateHandlePos(shape) {
+        const b = polygonBounds(shape.vertices);
+        const c = polygonCentroid(shape.vertices);
+        return { x: c.x, y: b.minY - 22 / state.cam.zoom };
+      }
+
+      let lastTime = 0;
+
+      function updateSimulation(dt) {
+        for (let i = state.particles.length - 1; i >= 0; i--) {
+          const p = state.particles[i];
+          p.x += p.vx * dt; p.y += p.vy * dt;
+          p.vx *= 0.94; p.vy *= 0.94;
+          p.alpha -= dt * 2.5;
+          if (p.alpha <= 0) state.particles.splice(i, 1);
+        }
+
+        for (const s of state.shapes) {
+          if (s.flash > 0) s.flash = Math.max(0, s.flash - dt * 4);
+        }
+
+        for (let i = state.impacts.length - 1; i >= 0; i--) {
+          const imp = state.impacts[i];
+          imp.r += dt * 70;
+          imp.alpha -= dt * 3.2;
+          if (imp.alpha <= 0) state.impacts.splice(i, 1);
+        }
+
+        if (!state.simPlaying || !state.simPath) return;
+
+        const speed = state.slowMo ? BALL_SPEED_NORMAL * 0.36 : BALL_SPEED_NORMAL;
+        let distToAdvance = speed * dt;
+        const pts = state.simPath.points;
+
+        while (distToAdvance > 0 && state.simSegmentIdx < pts.length - 1) {
+          const a = pts[state.simSegmentIdx];
+          const b = pts[state.simSegmentIdx + 1];
+          const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+          const remaining = segLen - state.simSegmentDist;
+
+          if (distToAdvance < remaining) {
+            state.simSegmentDist += distToAdvance;
+            const frac = segLen > 1e-6 ? state.simSegmentDist / segLen : 0;
+            state.simBallPos = { x: a.x + (b.x - a.x) * frac, y: a.y + (b.y - a.y) * frac };
+            distToAdvance = 0;
+          } else {
+            distToAdvance -= remaining;
+            state.simSegmentIdx++;
+            state.simSegmentDist = 0;
+            state.simBallPos = { x: b.x, y: b.y };
+
+            const hitEv = state.simPath.hitEvents.find(ev => ev.pointIdx === state.simSegmentIdx);
+            if (hitEv) {
+              const shape = state.shapes.find(s => s.id === hitEv.shapeId);
+              if (shape) {
+                state.impacts.push({
+                  x: hitEv.hitX,
+                  y: hitEv.hitY,
+                  r: state.ballRadius * 0.9,
+                  alpha: 0.9,
+                  color: shape.type === 'target' ? '#34d399' : '#94a3b8'
+                });
+                if (shape.type === 'target' && shape.alive) {
+                  shape.alive = false;
+                  spawnBurstParticles(shape);
+                  playTargetNote(state.hitCombo++);
+                  updateHud();
+                } else if (shape.type === 'wall') {
+                  shape.flash = 1;
+                  playWallThud();
+                }
+              }
+            }
+          }
+        }
+
+        if (state.simBallPos) {
+          state.simTrail.push({ x: state.simBallPos.x, y: state.simBallPos.y });
+          if (state.simTrail.length > 26) state.simTrail.shift();
+        }
+
+        if (state.simSegmentIdx >= pts.length - 1) {
+          state.simPlaying = false;
+          if (state.simPath.solved) {
+            playWinChord();
+            winBannerTitle.textContent = 'Level Selesai!';
+            winBannerSub.textContent = 'Semua target tersapu bersih';
+            winBounceCount.textContent = `${state.simPath.bounces} pantulan`;
+            winBanner.classList.remove('hidden');
+          } else {
+            if (state.restoreTimer) clearTimeout(state.restoreTimer);
+            state.restoreTimer = setTimeout(() => {
+              state.restoreTimer = null;
+              if (!state.simPlaying && !state.aiming && !state.solving) {
+                for (const s of state.shapes) s.alive = true;
+                state.simBallPos = null;
+                state.simTrail = [];
+                updateHud();
+              }
+            }, 650);
+          }
+        }
+      }
+
+      function renderScene(timeMs) {
+        const w = canvas.width, h = canvas.height;
+        const scaleX = w / LOGICAL_W, scaleY = h / LOGICAL_H;
+        const zoom = state.cam.zoom;
+
+        // Clear outer backdrop (visible when zoomed out or panned past edge)
+        ctx.save();
+        ctx.fillStyle = '#141a24';
+        ctx.fillRect(0, 0, w, h);
+
+        // Apply Base DPR Scale + Camera Zoom/Pan Transform
+        ctx.scale(scaleX, scaleY);
+        ctx.translate(LOGICAL_W * 0.5 + state.cam.panX, LOGICAL_H * 0.5 + state.cam.panY);
+        ctx.scale(zoom, zoom);
+        ctx.translate(-LOGICAL_W * 0.5, -LOGICAL_H * 0.5);
+
+        // 1. Playfield Board Background & Subtle Border
+        ctx.fillStyle = state.bgColor;
+        ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+        const vig = ctx.createRadialGradient(LOGICAL_W * 0.5, LOGICAL_H * 0.45, 60, LOGICAL_W * 0.5, LOGICAL_H * 0.5, LOGICAL_H * 0.75);
+        vig.addColorStop(0, 'rgba(255,255,255,0.03)');
+        vig.addColorStop(1, 'rgba(0,0,0,0.18)');
+        ctx.fillStyle = vig;
+        ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+        ctx.lineWidth = 1.5 / zoom;
+        ctx.strokeRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+        // 1B. Subtle Edge Percentage Ticks (25%, 50%, 75%) to help match real phone taps
+        if (state.showRuler) {
+          ctx.save();
+          ctx.fillStyle = 'rgba(226, 232, 240, 0.42)';
+          ctx.strokeStyle = 'rgba(226, 232, 240, 0.28)';
+          ctx.lineWidth = 1 / zoom;
+          ctx.font = `600 ${8 / Math.sqrt(zoom)}px monospace`;
+          const pcts = [0.25, 0.5, 0.75];
+          const tick = 5 / zoom;
+          for (const p of pcts) {
+            const tx = LOGICAL_W * p;
+            const ty = LOGICAL_H * p;
+            ctx.beginPath();
+            ctx.moveTo(tx, 0); ctx.lineTo(tx, tick);
+            ctx.moveTo(tx, LOGICAL_H); ctx.lineTo(tx, LOGICAL_H - tick);
+            ctx.moveTo(0, ty); ctx.lineTo(tick, ty);
+            ctx.moveTo(LOGICAL_W, ty); ctx.lineTo(LOGICAL_W - tick, ty);
+            ctx.stroke();
+
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(`${Math.round(p * 100)}%`, tx, LOGICAL_H - tick - 2 / zoom);
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(`${Math.round(p * 100)}%`, tick + 2 / zoom, ty);
+          }
+          ctx.restore();
+        }
+
+        // 5. Draw Crystal-Clear Solution Guide Trajectory (on top so it's super easy to read!)
+        if (state.solutionShot && state.showGuide && state.toolMode !== 'edit') {
+          // 5A. Optional Ghost Preview of Alternative Solutions
+          if (state.showAltPaths && state.solutions.length > 1) {
+            ctx.save();
+            state.solutions.forEach((alt, idx) => {
+              if (idx === state.activeSolutionIdx) return;
+              const apts = alt.simResult.points;
+              ctx.beginPath();
+              for (let i = 0; i < apts.length; i++) {
+                if (i === 0) ctx.moveTo(apts[i].x, apts[i].y);
+                else ctx.lineTo(apts[i].x, apts[i].y);
+              }
+              ctx.strokeStyle = 'rgba(148, 163, 184, 0.30)';
+              ctx.lineWidth = 1.5 / zoom;
+              ctx.setLineDash([4 / zoom, 6 / zoom]);
+              ctx.stroke();
+              ctx.setLineDash([]);
+
+              // Small numbered start dot for each alternative solution
+              ctx.beginPath();
+              ctx.arc(alt.sx, alt.sy, 7.5 / Math.sqrt(zoom), 0, Math.PI * 2);
+              ctx.fillStyle = 'rgba(15, 23, 42, 0.78)';
+              ctx.fill();
+              ctx.strokeStyle = 'rgba(148, 163, 184, 0.65)';
+              ctx.lineWidth = 1.2 / zoom;
+              ctx.stroke();
+
+              ctx.fillStyle = '#cbd5e1';
+              ctx.font = `700 ${7.5 / Math.sqrt(zoom)}px Inter, sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(String(idx + 1), alt.sx, alt.sy + 0.5 / zoom);
+            });
+            ctx.restore();
+          }
+
+          const sol = state.solutionShot;
+          const pts = sol.simResult.points;
+          const mainColor = sol.solved ? '#34d399' : '#fbbf24';
+
+          ctx.save();
+
+          // 5B. Visual Safe Aiming Cone & Finger Tolerance Halo (Zona Aman)
+          if (state.showSafeZone && sol.analysis && sol.solved) {
+            const tolRad = Math.max(0.008, (sol.analysis.angleTolDeg * Math.PI) / 180);
+            const coneLen = Math.min(130, 75 / Math.sqrt(zoom) + 38);
+
+            // Safe angle tolerance wedge
+            ctx.beginPath();
+            ctx.moveTo(sol.sx, sol.sy);
+            ctx.arc(sol.sx, sol.sy, coneLen, sol.angle - tolRad, sol.angle + tolRad);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(52, 211, 153, 0.22)';
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(52, 211, 153, 0.55)';
+            ctx.lineWidth = 1 / zoom;
+            ctx.stroke();
+
+            // Safe finger placement tolerance circle
+            if (sol.analysis.posTolPx >= 1.2) {
+              ctx.beginPath();
+              ctx.arc(sol.sx, sol.sy, Math.min(26, sol.analysis.posTolPx), 0, Math.PI * 2);
+              ctx.fillStyle = 'rgba(56, 189, 248, 0.16)';
+              ctx.fill();
+              ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+              ctx.lineWidth = 1.1 / zoom;
+              ctx.setLineDash([3 / zoom, 3 / zoom]);
+              ctx.stroke();
+              ctx.setLineDash([]);
+            }
+          }
+
+          // High-contrast dark halo under dashed path for maximum clarity over white blocks
+          ctx.beginPath();
+          for (let i = 0; i < pts.length; i++) {
+            if (i === 0) ctx.moveTo(pts[i].x, pts[i].y);
+            else ctx.lineTo(pts[i].x, pts[i].y);
+          }
+          ctx.strokeStyle = 'rgba(15, 23, 42, 0.45)';
+          ctx.lineWidth = 4.2 / zoom;
+          ctx.stroke();
+
+          ctx.strokeStyle = sol.solved ? 'rgba(52, 211, 153, 0.88)' : 'rgba(251, 191, 36, 0.88)';
+          ctx.lineWidth = 2.0 / zoom;
+          ctx.setLineDash([6 / zoom, 5 / zoom]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Numbered bounce badges (1, 2, 3...) when zoomed in or up to first 12 bounces
+          const maxLabels = zoom >= 1.4 ? pts.length - 1 : Math.min(pts.length - 1, 10);
+          for (let i = 1; i < pts.length - 1; i++) {
+            const p = pts[i];
+            if (i <= maxLabels) {
+              const r = 6.2 / Math.sqrt(zoom);
+              ctx.beginPath();
+              ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+              ctx.fillStyle = '#0f172a';
+              ctx.fill();
+              ctx.strokeStyle = mainColor;
+              ctx.lineWidth = 1.4 / zoom;
+              ctx.stroke();
+
+              ctx.fillStyle = '#ffffff';
+              ctx.font = `700 ${Math.max(6.5, 7.8 / Math.sqrt(zoom))}px Inter, sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(String(i), p.x, p.y + 0.5 / zoom);
+            } else {
+              ctx.beginPath();
+              ctx.arc(p.x, p.y, 2.6 / Math.sqrt(zoom), 0, Math.PI * 2);
+              ctx.fillStyle = mainColor;
+              ctx.fill();
+            }
+          }
+
+          // Pulsing Start Circle + Crisp Direction Arrow
+          const pulse = 1 + Math.sin(timeMs * 0.006) * 0.16;
+          ctx.beginPath();
+          ctx.arc(sol.sx, sol.sy, (14 / Math.sqrt(zoom)) * pulse, 0, Math.PI * 2);
+          ctx.strokeStyle = mainColor;
+          ctx.lineWidth = 2 / zoom;
+          ctx.stroke();
+
+          // Aim Arrow
+          const arrowLen = 46 / Math.sqrt(zoom);
+          const ax = sol.sx + Math.cos(sol.angle) * arrowLen;
+          const ay = sol.sy + Math.sin(sol.angle) * arrowLen;
+          ctx.beginPath();
+          ctx.moveTo(sol.sx, sol.sy);
+          ctx.lineTo(ax, ay);
+          ctx.strokeStyle = '#0f172a';
+          ctx.lineWidth = 5.5 / zoom;
+          ctx.stroke();
+          ctx.strokeStyle = mainColor;
+          ctx.lineWidth = 3 / zoom;
+          ctx.stroke();
+
+          // Arrowhead
+          const headLen = 10 / Math.sqrt(zoom);
+          ctx.beginPath();
+          ctx.moveTo(ax, ay);
+          ctx.lineTo(ax - headLen * Math.cos(sol.angle - 0.45), ay - headLen * Math.sin(sol.angle - 0.45));
+          ctx.lineTo(ax - headLen * Math.cos(sol.angle + 0.45), ay - headLen * Math.sin(sol.angle + 0.45));
+          ctx.closePath();
+          ctx.fillStyle = mainColor;
+          ctx.fill();
+
+          // Start Dot
+          ctx.beginPath();
+          ctx.arc(sol.sx, sol.sy, state.ballRadius, 0, Math.PI * 2);
+          ctx.fillStyle = sol.solved ? '#10b981' : '#f59e0b';
+          ctx.fill();
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.8 / zoom;
+          ctx.stroke();
+
+          ctx.restore();
+        }
+
+        // 6. Manual Aiming Preview
+        if (state.aiming && state.toolMode === 'play') {
+          const dx = state.aimCurrent.x - state.aimStart.x;
+          const dy = state.aimCurrent.y - state.aimStart.y;
+          const dist = Math.hypot(dx, dy);
+
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(state.aimStart.x, state.aimStart.y, state.ballRadius, 0, Math.PI * 2);
+          ctx.fillStyle = '#ffffff';
+          ctx.shadowColor = 'rgba(0,0,0,0.45)';
+          ctx.shadowBlur = 6;
+          ctx.fill();
+
+          if (dist > 6 / zoom) {
+            const ang = Math.atan2(dy, dx);
+            const ux = Math.cos(ang), uy = Math.sin(ang);
+            const previewHit = castCircleAgainstShapes(state.aimStart.x, state.aimStart.y, ux, uy, state.shapes, null, state.ballRadius);
+            const rayLen = previewHit ? Math.min(previewHit.t, 450) : 450;
+
+            ctx.beginPath();
+            ctx.moveTo(state.aimStart.x, state.aimStart.y);
+            ctx.lineTo(state.aimStart.x + ux * rayLen, state.aimStart.y + uy * rayLen);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.lineWidth = 2.2 / zoom;
+            ctx.setLineDash([4 / zoom, 5 / zoom]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Live angle badge near cursor
+            const deg = (((ang * 180) / Math.PI) % 360 + 360) % 360;
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+            ctx.fillRect(state.aimCurrent.x + 10 / zoom, state.aimCurrent.y - 16 / zoom, 44 / zoom, 18 / zoom);
+            ctx.fillStyle = '#38bdf8';
+            ctx.font = `700 ${10 / zoom}px monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(`${deg.toFixed(1)}°`, state.aimCurrent.x + 32 / zoom, state.aimCurrent.y - 7 / zoom);
+          }
+          ctx.restore();
+        }
+
+        // 7. Active Ball Trail & Ball
+        if (state.simTrail.length > 1) {
+          ctx.save();
+          for (let i = 1; i < state.simTrail.length; i++) {
+            const frac = i / state.simTrail.length;
+            ctx.beginPath();
+            ctx.moveTo(state.simTrail[i - 1].x, state.simTrail[i - 1].y);
+            ctx.lineTo(state.simTrail[i].x, state.simTrail[i].y);
+            ctx.strokeStyle = `rgba(255, 255, 255, ${frac * 0.48})`;
+            ctx.lineWidth = state.ballRadius * 1.45 * frac;
+            ctx.lineCap = 'round';
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
+        if (state.simBallPos) {
+        // 8. Impact Ripples & Burst Particles
+        for (const imp of state.impacts) {
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, imp.alpha);
+          ctx.beginPath();
+          ctx.arc(imp.x, imp.y, imp.r, 0, Math.PI * 2);
+          ctx.strokeStyle = imp.color;
+          ctx.lineWidth = 2 / zoom;
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        for (const p of state.particles) {
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, p.alpha);
+          ctx.fillStyle = p.color;
+          ctx.fillRect(p.x - p.size * 0.5, p.y - p.size * 0.5, p.size, p.size);
+          ctx.restore();
+        }
+
+        ctx.restore();
+      }
+
+      function animateLoop(timeMs) {
+        if (!lastTime) lastTime = timeMs;
+        const dt = Math.min((timeMs - lastTime) / 1000, 0.045);
+        lastTime = timeMs;
+
+        updateSimulation(dt);
+        renderScene(timeMs);
+        requestAnimationFrame(animateLoop);
+      }
+
+      // =======================================================================
+      // 11. UNIFIED POINTER, PINCH-TO-ZOOM, DRAG-PAN & PRECISION EDIT EVENTS
+      // =======================================================================
+
+      function findShapeAtPoint(px, py) {
+        for (let i = state.shapes.length - 1; i >= 0; i--) {
+          if (pointInPolygon(px, py, state.shapes[i].vertices)) return state.shapes[i];
+        }
+        return null;
+      }
+
+      function getSelectedShape() {
+        return state.shapes.find(s => s.id === state.selectedShapeId) || null;
+      }
+
+      function invalidateSolutionOnEdit() {
+        state.solutionShot = null;
+        state.solutions = [];
+        state.activeSolutionIdx = -1;
+        btnReplay.disabled = true;
+        btnFocusStart.disabled = true;
+        btnAnalyzeFineTune.disabled = true;
+        btnFireFineTune.disabled = true;
+        easeAnalysisBox.classList.add('hidden');
+        renderMultiSolutionList();
+        updateSelectionInspector();
+      }
+
+      // Desktop Wheel Zoom centered on cursor
+      canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.14 : 1 / 1.14;
+        const stagePt = clientToStageUnzoomed(e.clientX, e.clientY);
+        zoomAtStagePoint(state.cam.zoom * factor, stagePt.x, stagePt.y);
+      }, { passive: false });
+
+      // Spacebar drag-pan + Arrow-key precision nudge & Delete in Edit Mode
+      window.addEventListener('keydown', (e) => {
+        const tag = document.activeElement ? document.activeElement.tagName : '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+        if (e.code === 'Space' && !e.repeat) {
+          e.preventDefault();
+          state.spacePressed = true;
+          canvas.classList.add('cursor-pan');
+          return;
+        }
+
+        if (state.toolMode === 'edit' && state.selectedShapeId !== null) {
+          const step = e.shiftKey ? 5 : 1;
+          if (e.key === 'ArrowUp') { e.preventDefault(); nudgeSelected(0, -step); }
+          else if (e.key === 'ArrowDown') { e.preventDefault(); nudgeSelected(0, step); }
+          else if (e.key === 'ArrowLeft') { e.preventDefault(); nudgeSelected(-step, 0); }
+          else if (e.key === 'ArrowRight') { e.preventDefault(); nudgeSelected(step, 0); }
+          else if (e.key === 'Delete' || e.key === 'Backspace') {
+            e.preventDefault();
+            state.shapes = state.shapes.filter(s => s.id !== state.selectedShapeId);
+            state.selectedShapeId = null;
+            invalidateSolutionOnEdit();
+            updateHud();
+          }
+        }
+      });
+
+      canvas.addEventListener('pointerdown', (e) => {
+        if (state.solving) return;
+        e.preventDefault();
+        canvas.setPointerCapture(e.pointerId);
+        ensureAudio();
+
+        state.activePointers.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+
+        // TWO-FINGER PINCH-TO-ZOOM & PAN
+        if (state.activePointers.size === 2) {
+          state.aiming = false;
+          state.draggingShape = false;
+          state.rotatingShape = false;
+          state.isPanning = false;
+          const pts = Array.from(state.activePointers.values());
+          state.pinchStartDist = Math.hypot(pts[1].clientX - pts[0].clientX, pts[1].clientY - pts[0].clientY) || 1;
+          state.pinchStartZoom = state.cam.zoom;
+          state.pinchPrevMid = {
+            x: (pts[0].clientX + pts[1].clientX) * 0.5,
+            y: (pts[0].clientY + pts[1].clientY) * 0.5
+          };
+          return;
+        }
+
+        if (state.activePointers.size > 2) return;
+
+        // SINGLE POINTER: Pan Mode, Middle Click, or Spacebar Drag
+        if (state.toolMode === 'pan' || e.button === 1 || state.spacePressed) {
+          state.isPanning = true;
+          state.panPrevClient = { x: e.clientX, y: e.clientY };
+          return;
+        }
+
+        const pt = clientToLogical(e.clientX, e.clientY);
+
+        // EDIT MODE
+        if (state.toolMode === 'edit') {
+          const sel = getSelectedShape();
+          if (sel) {
+            // Check if tapping on-canvas rotation knob
+            const handle = getRotateHandlePos(sel);
+            if (Math.hypot(pt.x - handle.x, pt.y - handle.y) <= 13 / state.cam.zoom) {
+              state.rotatingShape = true;
+              state.rotCenter = polygonCentroid(sel.vertices);
+              state.rotStartAngle = Math.atan2(pt.y - state.rotCenter.y, pt.x - state.rotCenter.x);
+              state.rotOriginalVerts = sel.vertices.map(v => ({ ...v }));
+              return;
+            }
+          }
+
+          const hit = findShapeAtPoint(pt.x, pt.y);
+          if (hit) {
+            state.selectedShapeId = hit.id;
+            state.draggingShape = true;
+            state.dragStartLogical = pt;
+            state.dragOriginalVerts = hit.vertices.map(v => ({ ...v }));
+            updateSelectionInspector();
+            switchTab('edit');
+          } else {
+            state.selectedShapeId = null;
+            state.draggingShape = false;
+            updateSelectionInspector();
+          }
+          return;
+        }
+
+        // PLAY / AIM MODE
+        // Allow tapping directly on any ghost alternative solution's numbered start dot
+        if (state.showGuide && state.showAltPaths && state.solutions.length > 1) {
+          for (let idx = 0; idx < state.solutions.length; idx++) {
+            if (idx === state.activeSolutionIdx) continue;
+            const alt = state.solutions[idx];
+            if (Math.hypot(pt.x - alt.sx, pt.y - alt.sy) <= 13 / Math.sqrt(state.cam.zoom)) {
+              selectSolutionByIndex(idx, true);
+              showToast(`Beralih ke Solusi #${idx + 1}`);
+              return;
+            }
+          }
+        }
+
+        stopSimulation(true);
+        if (!isPointClearOfShapes(pt.x, pt.y, state.shapes, state.ballRadius)) {
+          showToast('Mulai sentuhan di ruang kosong (bukan di atas balok).');
+          return;
+        }
+        state.aiming = true;
+        state.aimStart = pt;
+        state.aimCurrent = pt;
+      });
+
+      canvas.addEventListener('pointermove', (e) => {
+        if (state.solving) return;
+        if (state.activePointers.has(e.pointerId)) {
+          state.activePointers.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+        }
+
+        // Handle Two-Finger Pinch Zoom + Pan
+        if (state.activePointers.size === 2) {
+          const pts = Array.from(state.activePointers.values());
+          const dist = Math.hypot(pts[1].clientX - pts[0].clientX, pts[1].clientY - pts[0].clientY) || 1;
+          const midClient = {
+            x: (pts[0].clientX + pts[1].clientX) * 0.5,
+            y: (pts[0].clientY + pts[1].clientY) * 0.5
+          };
+
+          // First apply two-finger pan delta
+          if (state.pinchPrevMid) {
+            const rect = canvas.getBoundingClientRect();
+            const dxStage = ((midClient.x - state.pinchPrevMid.x) / rect.width) * LOGICAL_W;
+            const dyStage = ((midClient.y - state.pinchPrevMid.y) / rect.height) * LOGICAL_H;
+            state.cam.panX += dxStage;
+            state.cam.panY += dyStage;
+          }
+          state.pinchPrevMid = midClient;
+
+          // Then apply pinch zoom around midpoint
+          const targetZoom = state.pinchStartZoom * (dist / state.pinchStartDist);
+          const midStage = clientToStageUnzoomed(midClient.x, midClient.y);
+          zoomAtStagePoint(targetZoom, midStage.x, midStage.y);
+          return;
+        }
+
+        // Handle Single-Finger Pan Drag
+        if (state.isPanning && state.panPrevClient) {
+          const rect = canvas.getBoundingClientRect();
+          const dxStage = ((e.clientX - state.panPrevClient.x) / rect.width) * LOGICAL_W;
+          const dyStage = ((e.clientY - state.panPrevClient.y) / rect.height) * LOGICAL_H;
+          state.cam.panX += dxStage;
+          state.cam.panY += dyStage;
+          state.panPrevClient = { x: e.clientX, y: e.clientY };
+          clampCamera();
+          return;
+        }
+
+        const pt = clientToLogical(e.clientX, e.clientY);
+
+        // Handle On-Canvas Shape Rotation
+        if (state.toolMode === 'edit' && state.rotatingShape) {
+          const sel = getSelectedShape();
+          if (sel && state.rotOriginalVerts) {
+            const curAng = Math.atan2(pt.y - state.rotCenter.y, pt.x - state.rotCenter.x);
+            let delta = curAng - state.rotStartAngle;
+            if (state.snapToGrid) {
+              // Snap to 15-degree increments when snap is enabled
+              const stepRad = (15 * Math.PI) / 180;
+              delta = Math.round(delta / stepRad) * stepRad;
+            }
+            const cos = Math.cos(delta), sin = Math.sin(delta);
+            sel.vertices = state.rotOriginalVerts.map(v => {
+              const rx = v.x - state.rotCenter.x;
+              const ry = v.y - state.rotCenter.y;
+              return {
+                x: state.rotCenter.x + rx * cos - ry * sin,
+                y: state.rotCenter.y + rx * sin + ry * cos
+              };
+            });
+            invalidateSolutionOnEdit();
+          }
+          return;
+        }
+
+        // Handle On-Canvas Shape Dragging (with optional Snap-to-Grid)
+        if (state.toolMode === 'edit' && state.draggingShape) {
+          const sel = getSelectedShape();
+          if (sel && state.dragOriginalVerts) {
+            let dx = pt.x - state.dragStartLogical.x;
+            let dy = pt.y - state.dragStartLogical.y;
+            if (state.snapToGrid) {
+              const origC = polygonCentroid(state.dragOriginalVerts);
+              const snappedX = Math.round((origC.x + dx) / GRID_STEP) * GRID_STEP;
+              const snappedY = Math.round((origC.y + dy) / GRID_STEP) * GRID_STEP;
+              dx = snappedX - origC.x;
+              dy = snappedY - origC.y;
+            }
+            sel.vertices = state.dragOriginalVerts.map(v => ({ x: v.x + dx, y: v.y + dy }));
+            invalidateSolutionOnEdit();
+          }
+          return;
+        }
+
+        // Handle Aiming
+        if (state.aiming) {
+          state.aimCurrent = pt;
+        }
+      });
+
+      function finishPointer(e) {
+        state.activePointers.delete(e.pointerId);
+        if (state.activePointers.size < 2) {
+          state.pinchPrevMid = null;
+        }
+
+        if (state.isPanning) {
+          state.isPanning = false;
+          state.panPrevClient = null;
+          return;
+        }
+
+        if (state.toolMode === 'edit') {
+          state.draggingShape = false;
+          state.rotatingShape = false;
+          return;
+        }
+
+        if (!state.aiming) return;
+        state.aiming = false;
+
+        const dx = state.aimCurrent.x - state.aimStart.x;
+        const dy = state.aimCurrent.y - state.aimStart.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 7 / state.cam.zoom) return;
+
+        const angle = Math.atan2(dy, dx);
+        const sim = simulateShot(state.aimStart.x, state.aimStart.y, angle, state.shapes, false);
+        applySolutionResult(sim, true);
+      }
+
+      canvas.addEventListener('pointerup', finishPointer);
+      canvas.addEventListener('pointercancel', finishPointer);
+
+      // =======================================================================
+      // 12. UI BUTTONS, TABS, FINE-TUNER & EDITOR CONTROLS
+      // =======================================================================
+
+      // Tab switching
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          switchTab(btn.dataset.tab);
+          if (btn.dataset.tab === 'edit') setToolMode('edit');
+          else if (btn.dataset.tab === 'solve' && state.toolMode === 'edit') setToolMode('play');
+        });
+      });
+
+      // Stage Tool Switcher
+      toolPlay.addEventListener('click', () => setToolMode('play'));
+      toolPan.addEventListener('click', () => setToolMode('pan'));
+      toolEdit.addEventListener('click', () => {
+        setToolMode('edit');
+        switchTab('edit');
+      });
+
+      // Floating Zoom Buttons
+      btnZoomIn.addEventListener('click', () => zoomAtStagePoint(state.cam.zoom * 1.3, LOGICAL_W * 0.5, LOGICAL_H * 0.5));
+      btnZoomOut.addEventListener('click', () => zoomAtStagePoint(state.cam.zoom / 1.3, LOGICAL_W * 0.5, LOGICAL_H * 0.5));
+      btnZoomReset.addEventListener('click', resetCamera);
+
+      // Main Action Buttons
+      btnAutoSolve.addEventListener('click', runAutoSolver);
+      btnCancelSolve.addEventListener('click', () => { state.cancelSolveFlag = true; });
+
+      btnReplay.addEventListener('click', () => {
+        if (state.solutionShot && !state.solving) {
+          ensureAudio();
+          const reSim = simulateShot(state.solutionShot.sx, state.solutionShot.sy, state.solutionShot.angle, state.shapes, false);
+          launchSimulationFromShot(reSim);
+        }
+      });
+
+      btnSlowMo.addEventListener('click', () => {
+        state.slowMo = !state.slowMo;
+        btnSlowMo.classList.toggle('active-toggle', state.slowMo);
+        slowMoLabel.textContent = state.slowMo ? 'Slow 0.4x' : 'Normal 1x';
+      });
+
+      btnShowGuide.addEventListener('click', () => {
+        state.showGuide = !state.showGuide;
+        btnShowGuide.classList.toggle('active-emerald', state.showGuide);
+      });
+
+      btnFocusStart.addEventListener('click', focusCameraOnSolutionStart);
+
+      btnToggleSafeZone.addEventListener('click', () => {
+        state.showSafeZone = !state.showSafeZone;
+        btnToggleSafeZone.classList.toggle('active-emerald', state.showSafeZone);
+      });
+
+      btnToggleAltPaths.addEventListener('click', () => {
+        state.showAltPaths = !state.showAltPaths;
+        btnToggleAltPaths.classList.toggle('active-toggle', state.showAltPaths);
+      });
+
+      btnGridOverlay.addEventListener('click', () => {
+        state.showGrid = !state.showGrid;
+        btnGridOverlay.classList.toggle('active-toggle', state.showGrid);
+      });
+
+      btnMute.addEventListener('click', () => {
+        state.muted = !state.muted;
+        muteIcon.textContent = state.muted ? '🔇' : '🔊';
+      });
+
+      btnResetBoard.addEventListener('click', () => {
+        stopSimulation(true);
+        resetCamera();
+        showToast('Papan & tampilan zoom direset.');
+      });
+
+      // Live Precision Shot Fine-Tuner Sliders
+      function handleFineTuneInput() {
+        if (state.solving) return;
+        const sx = Number(sliderFineX.value);
+        const sy = Number(sliderFineY.value);
+        const deg = Number(sliderFineAng.value);
+        fineXVal.textContent = sx.toFixed(1);
+        fineYVal.textContent = sy.toFixed(1);
+        fineAngVal.textContent = `${deg.toFixed(1)}°`;
+
+        if (!isPointClearOfShapes(sx, sy, state.shapes, state.ballRadius)) {
+          solutionBadge.textContent = 'Titik Tertutup Balok';
+          solutionBadge.className = 'text-[11px] font-bold px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-400/30';
+          return;
+        }
+        const angRad = (deg * Math.PI) / 180;
+        const sim = simulateShot(sx, sy, angRad, state.shapes, false);
+        state.activeSolutionIdx = -1;
+        state.solutionShot = { sx, sy, angle: angRad, simResult: sim, solved: sim.solved, analysis: null, badges: [] };
+        state.showGuide = true;
+        btnShowGuide.classList.add('active-emerald');
+        btnReplay.disabled = false;
+        btnFocusStart.disabled = false;
+        btnAnalyzeFineTune.disabled = false;
+        btnFireFineTune.disabled = false;
+        updateSolutionPanel(sim, null);
+        renderMultiSolutionList();
+      }
+
+      sliderFineX.addEventListener('input', handleFineTuneInput);
+      sliderFineY.addEventListener('input', handleFineTuneInput);
+      sliderFineAng.addEventListener('input', handleFineTuneInput);
+      btnAnalyzeFineTune.addEventListener('click', () => {
+        if (!state.solutionShot || state.solving) return;
+        const analyzed = analyzeAndCenterSolution(state.solutionShot.simResult, state.shapes);
+        state.solutionShot = analyzed;
+        syncFineTuneSliders(analyzed.sx, analyzed.sy, analyzed.angle);
+        updateSolutionPanel(analyzed.simResult, analyzed.analysis);
+        showToast(`Analisis selesai! Skor Kemudahan: ${analyzed.analysis.easeScore}/100 (Sudut ±${analyzed.analysis.angleTolDeg.toFixed(2)}°).`);
+      });
+      btnFireFineTune.addEventListener('click', () => {
+        if (state.solutionShot) {
+          ensureAudio();
+          const reSim = simulateShot(state.solutionShot.sx, state.solutionShot.sy, state.solutionShot.angle, state.shapes, false);
+          launchSimulationFromShot(reSim);
+        }
+      });
+
+      // Upload & Paste Screenshot
+      btnUploadQuick.addEventListener('click', () => imageInput.click());
+      dropZone.addEventListener('click', () => imageInput.click());
+      imageInput.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files[0]) {
+          handleImageFile(e.target.files[0]);
+          imageInput.value = '';
+        }
+      });
+      dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drop-active'); });
+      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drop-active'));
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drop-active');
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) handleImageFile(e.dataTransfer.files[0]);
+      });
+      window.addEventListener('paste', (e) => {
+        const items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+        for (const item of items) {
+          if (item.type.startsWith('image/')) {
+            handleImageFile(item.getAsFile());
+            break;
+          }
+        }
+      });
+
+      // Scan Calibration Controls
+      btnToggleOverlay.addEventListener('click', () => {
+        state.showImageOverlay = !state.showImageOverlay;
+        btnToggleOverlay.textContent = state.showImageOverlay ? 'Overlay Foto: ON' : 'Overlay Foto: OFF';
+        btnToggleOverlay.classList.toggle('active-toggle', state.showImageOverlay);
+      });
+      btnSwapColors.addEventListener('click', () => {
+        state.swapTargetWall = !state.swapTargetWall;
+        if (state.uploadedImage) {
+          extractShapesFromUploadedImage();
+          showToast('Target & Dinding ditukar.');
+        }
+      });
+      sliderSens.addEventListener('input', () => {
+        state.detectSensitivity = Number(sliderSens.value);
+        sensVal.textContent = state.detectSensitivity;
+        if (state.uploadedImage) extractShapesFromUploadedImage();
+      });
+      sliderOverlayAlpha.addEventListener('input', () => {
+        const v = Number(sliderOverlayAlpha.value);
+        state.imageOverlayAlpha = v / 100;
+        overlayAlphaVal.textContent = `${v}%`;
+      });
+      chkIgnoreBars.addEventListener('change', () => {
+        state.ignoreStatusBars = chkIgnoreBars.checked;
+        if (state.uploadedImage) extractShapesFromUploadedImage();
+      });
+      document.getElementById('btnRescan').addEventListener('click', () => {
+        if (state.uploadedImage) {
+          extractShapesFromUploadedImage();
+          showToast('Screenshot di-scan ulang.');
+        }
+      });
+      sliderBallSize.addEventListener('input', () => {
+        state.ballRadius = Number(sliderBallSize.value);
+        ballSizeVal.textContent = `${state.ballRadius.toFixed(1)} px`;
+        if (state.solutionShot) {
+          const sim = simulateShot(state.solutionShot.sx, state.solutionShot.sy, state.solutionShot.angle, state.shapes, false);
+          const analyzed = analyzeAndCenterSolution(sim, state.shapes);
+          state.solutionShot = analyzed;
+          updateSolutionPanel(analyzed.simResult, analyzed.analysis);
+        }
+      });
+
+      // Preset Selector Buttons
+      document.querySelectorAll('.preset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (!state.solving) loadPreset(btn.dataset.preset);
+        });
+      });
+
+      // Shape Editor Controls
+      chkSnapGrid.addEventListener('change', () => {
+        state.snapToGrid = chkSnapGrid.checked;
+        if (state.snapToGrid && !state.showGrid) {
+          state.showGrid = true;
+          btnGridOverlay.classList.add('active-toggle');
+        }
+      });
+
+      function addAndSelectShape(shape) {
+        state.shapes.push(shape);
+        state.selectedShapeId = shape.id;
+        setToolMode('edit');
+        invalidateSolutionOnEdit();
+        updateHud();
+      }
+
+      document.getElementById('btnAddRectTarget').addEventListener('click', () => addAndSelectShape(makeRectShape(200, 340, 68, 26, 0, 'target')));
+      document.getElementById('btnAddTriTarget').addEventListener('click', () => addAndSelectShape(makeRightTriangle(175, 315, 50, 'target')));
+      document.getElementById('btnAddRectWall').addEventListener('click', () => addAndSelectShape(makeRectShape(200, 340, 18, 120, 0, 'wall')));
+      document.getElementById('btnAddTriWall').addEventListener('click', () => addAndSelectShape(makeRightTriangle(175, 315, 50, 'wall')));
+
+      document.getElementById('btnFlipType').addEventListener('click', () => {
+        const s = getSelectedShape();
+        if (!s) return;
+        s.type = s.type === 'target' ? 'wall' : 'target';
+        invalidateSolutionOnEdit();
+        updateHud();
+      });
+
+      document.getElementById('btnDuplicateShape').addEventListener('click', () => {
+        const s = getSelectedShape();
+        if (!s) return;
+        const copy = {
+          id: nextShapeId++,
+          type: s.type,
+          vertices: s.vertices.map(v => ({ x: v.x + 18, y: v.y + 18 })),
+          alive: true,
+          flash: 0
+        };
+        addAndSelectShape(copy);
+      });
+
+      document.getElementById('btnDeleteShape').addEventListener('click', () => {
+        if (state.selectedShapeId === null) return;
+        state.shapes = state.shapes.filter(s => s.id !== state.selectedShapeId);
+        state.selectedShapeId = null;
+        invalidateSolutionOnEdit();
+        updateHud();
+      });
+
+      document.getElementById('btnClearAll').addEventListener('click', () => {
+        state.shapes = [];
+        state.selectedShapeId = null;
+        stopSimulation(true);
+        invalidateSolutionOnEdit();
+        updateHud();
+      });
+
+      // D-Pad Nudge Buttons
+      function nudgeSelected(dx, dy) {
+        const s = getSelectedShape();
+        if (!s) return;
+        translateShape(s, dx, dy);
+        invalidateSolutionOnEdit();
+      }
+      document.getElementById('btnNudgeUp').addEventListener('click', () => nudgeSelected(0, -2));
+      document.getElementById('btnNudgeDown').addEventListener('click', () => nudgeSelected(0, 2));
+      document.getElementById('btnNudgeLeft').addEventListener('click', () => nudgeSelected(-2, 0));
+      document.getElementById('btnNudgeRight').addEventListener('click', () => nudgeSelected(2, 0));
+      document.getElementById('btnCenterShape').addEventListener('click', () => {
+        const s = getSelectedShape();
+        if (!s) return;
+        const c = polygonCentroid(s.vertices);
+        translateShape(s, LOGICAL_W * 0.5 - c.x, LOGICAL_H * 0.5 - c.y);
+        invalidateSolutionOnEdit();
+      });
+
+      // Precision Rotate, Scale & Mirror
+      document.getElementById('btnRotM15').addEventListener('click', () => { const s = getSelectedShape(); if (s) { rotateShape(s, -15); invalidateSolutionOnEdit(); } });
+      document.getElementById('btnRotM1').addEventListener('click', () => { const s = getSelectedShape(); if (s) { rotateShape(s, -1); invalidateSolutionOnEdit(); } });
+      document.getElementById('btnRotP1').addEventListener('click', () => { const s = getSelectedShape(); if (s) { rotateShape(s, 1); invalidateSolutionOnEdit(); } });
+      document.getElementById('btnRotP15').addEventListener('click', () => { const s = getSelectedShape(); if (s) { rotateShape(s, 15); invalidateSolutionOnEdit(); } });
+      document.getElementById('btnScaleUp').addEventListener('click', () => { const s = getSelectedShape(); if (s) { scaleShape(s, 1.08); invalidateSolutionOnEdit(); } });
+      document.getElementById('btnScaleDown').addEventListener('click', () => { const s = getSelectedShape(); if (s) { scaleShape(s, 0.92); invalidateSolutionOnEdit(); } });
+      document.getElementById('btnMirrorX').addEventListener('click', () => { const s = getSelectedShape(); if (s) { mirrorShapeX(s); invalidateSolutionOnEdit(); } });
+
+      // =======================================================================
+      // 13. INITIALIZATION ON WINDOW LOAD
+      // =======================================================================
+      window.addEventListener('resize', resizeCanvas);
+      window.onload = () => {
+        resizeCanvas();
+        loadPreset('triangles4x5');
+        requestAnimationFrame(animateLoop);
+      };
+    })();
+  </script>
+</body>
+</html>

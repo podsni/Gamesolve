@@ -1,0 +1,6 @@
+{
+  "name": "Okay? Simulator & Auto-Solver",
+  "description": "Simulator fisika pantulan bola interaktif, editor posisi presisi, pemindai screenshot otomatis, dan auto-solver multi-solusi untuk puzzle Okay?.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
